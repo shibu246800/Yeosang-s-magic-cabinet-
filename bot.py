@@ -1,5 +1,7 @@
 import os
 
+from cogs.cabinet import setup as setup_cabinet
+
 import discord
 from discord.ext import commands
 
