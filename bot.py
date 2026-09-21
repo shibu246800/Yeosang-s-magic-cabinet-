@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 import discord
@@ -14,15 +15,14 @@ bot = commands.Bot(
 )
 
 
-async def main():
-    await setup_cabinet(bot)
-    await bot.start(os.environ["DISCORD_TOKEN"])
-
-
+@bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
 
 
-import asyncio
+async def main():
+    await setup_cabinet(bot)
+    await bot.start(os.environ["DISCORD_TOKEN"])
+
 
 asyncio.run(main())
