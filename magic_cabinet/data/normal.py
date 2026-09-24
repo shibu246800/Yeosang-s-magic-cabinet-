@@ -1,1 +1,4 @@
+"""Normal cards. Rarity: ★"""
 
+CARDS = [
+]
