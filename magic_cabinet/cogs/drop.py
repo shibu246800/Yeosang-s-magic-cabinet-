@@ -18,7 +18,7 @@ class Drop(commands.Cog):
     async def drop(self, interaction: discord.Interaction):
         """Handle the /drop command."""
 
-        cabinet = self.bot.get_cog("Cabinet")
+        cabinet = self.bot.get_cog("cabinet")
 
         if cabinet is None:
             await interaction.response.send_message(
