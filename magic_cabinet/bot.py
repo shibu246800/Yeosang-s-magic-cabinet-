@@ -1,7 +1,15 @@
+import os
+
 import discord
 from discord.ext import commands
+from dotenv import load_dotenv
 
-TOKEN = "YOUR_BOT_TOKEN_HERE"
+load_dotenv()
+
+TOKEN = os.getenv("DISCORD_TOKEN")
+
+if not TOKEN:
+    raise RuntimeError("DISCORD_TOKEN is missing.")
 
 intents = discord.Intents.default()
 
