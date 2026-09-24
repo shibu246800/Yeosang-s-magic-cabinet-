@@ -143,20 +143,3 @@ class Cabinet(commands.GroupCog, name="cabinet"):
                 SELECT
                     channel1_id,
                     channel2_id,
-                    channel3_id,
-                    channel4_id,
-                    channel5_id
-                FROM drop_channels
-                WHERE guild_id = ?
-                """,
-                (guild_id,),
-            ).fetchone()
-
-        if result is None:
-            return False
-
-        return channel_id in result
-
-
-async def setup(bot: commands.Bot):
-    await bot.add_cog(Cabinet(bot))
