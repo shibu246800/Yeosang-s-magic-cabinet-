@@ -1,4 +1,5 @@
 import os
+import asyncio
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
@@ -19,8 +20,8 @@ async def on_ready():
 
 
 async def load_cogs():
-    await bot.load_extension("magic_cabinet.cogs.health")
-    await bot.load_extension("magic_cabinet.cogs.cabinet")
+    await bot.load_extension("cogs.health")
+    await bot.load_extension("cogs.cabinet")
 
 
 async def main():
@@ -29,5 +30,4 @@ async def main():
         await bot.start(os.getenv("DISCORD_TOKEN"))
 
 
-import asyncio
 asyncio.run(main())
