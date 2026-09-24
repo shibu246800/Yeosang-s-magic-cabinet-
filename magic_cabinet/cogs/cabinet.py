@@ -38,8 +38,7 @@ class Cabinet(commands.GroupCog, name="cabinet"):
     @app_commands.command(
         name="setup",
         description=(
-            "Set the channel/channels where Yeosang can use /drop. "
-            "It can be changed anytime."
+            "Set the channel or channels where /drop can be used."
         ),
     )
     @app_commands.describe(
@@ -126,3 +125,38 @@ class Cabinet(commands.GroupCog, name="cabinet"):
 
         await interaction.response.send_message(
             "🗝️ **Drop channels saved!**\n\n"
+            "`/drop` can now be used only in:\n"
+            f"{channel_list}\n\n"
+            "Other Magic Cabinet commands are not restricted by this setup."
+        )
+
+    def is_drop_channel(
+        self,
+        guild_id: int,
+        channel_id: int,
+    ) -> bool:
+        """Check whether /drop is allowed in this channel."""
+
+        with sqlite3.connect(DATABASE) as connection:
+            result = connection.execute(
+                """
+                SELECT
+                    channel1_id,
+                    channel2_id,
+                    channel3_id,
+                    channel4_id,
+                    channel5_id
+                FROM drop_channels
+                WHERE guild_id = ?
+                """,
+                (guild_id,),
+            ).fetchone()
+
+        if result is None:
+            return False
+
+        return channel_id in result
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Cabinet(bot))
