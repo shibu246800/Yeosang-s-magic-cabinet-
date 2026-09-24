@@ -15,9 +15,16 @@ class Cabinet(commands.GroupCog, name="cabinet"):
         name="setup",
         description="Set your channel/channels where Yeosang can work. It can be changed anytime."
     )
-    async def setup(self, interaction: discord.Interaction):
+    @app_commands.describe(
+        channel="Choose the channel where Yeosang can work."
+    )
+    async def setup(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel,
+    ):
         await interaction.response.send_message(
-            "Magic Cabinet setup is ready."
+            f"Yeosang can work in {channel.mention}."
         )
 
 
