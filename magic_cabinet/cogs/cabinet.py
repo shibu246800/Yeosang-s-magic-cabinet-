@@ -31,16 +31,15 @@ class Cabinet(commands.GroupCog, name="cabinet"):
         channel4: discord.TextChannel | None = None,
         channel5: discord.TextChannel | None = None,
     ):
-        channels = [
-            channel1,
-            channel2,
-            channel3,
-            channel4,
-            channel5,
-        ]
-
         selected_channels = [
-            channel for channel in channels
+            channel
+            for channel in (
+                channel1,
+                channel2,
+                channel3,
+                channel4,
+                channel5,
+            )
             if channel is not None
         ]
 
@@ -50,9 +49,8 @@ class Cabinet(commands.GroupCog, name="cabinet"):
         )
 
         await interaction.response.send_message(
-            "Magic Cabinet setup received!\n\n"
-            "Yeosang can work in:\n"
-            f"{channel_list}"
+            f"Magic Cabinet setup received!\n\n"
+            f"Yeosang now works in:\n{channel_list}"
         )
 
 
