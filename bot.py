@@ -12,8 +12,22 @@ bot = commands.Bot(
     intents=intents
 )
 
+
 @bot.event
 async def on_ready():
     print(f"Magic Cabinet is online as {bot.user}")
 
-bot.run(os.getenv("DISCORD_TOKEN"))
+
+async def load_cogs():
+    await bot.load_extension("magic_cabinet.cogs.health")
+    await bot.load_extension("magic_cabinet.cogs.cabinet")
+
+
+async def main():
+    async with bot:
+        await load_cogs()
+        await bot.start(os.getenv("DISCORD_TOKEN"))
+
+
+import asyncio
+asyncio.run(main())
