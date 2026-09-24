@@ -6,6 +6,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from flask import Flask
 
+
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -28,8 +29,10 @@ def run_health_server():
     app.run(host="0.0.0.0", port=port)
 
 
-# Start the health server separately
-threading.Thread(target=run_health_server, daemon=True).start()
+threading.Thread(
+    target=run_health_server,
+    daemon=True
+).start()
 
 
 # Discord bot
@@ -41,8 +44,13 @@ bot = commands.Bot(
 )
 
 
-async def load_cabinet():
+# Load bot extensions before the bot starts
+async def setup_hook():
     await bot.load_extension("magic_cabinet.cogs.cabinet")
+
+
+bot.setup_hook = setup_hook
+
 
 @bot.event
 async def on_ready():
