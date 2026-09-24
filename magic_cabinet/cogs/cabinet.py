@@ -16,15 +16,43 @@ class Cabinet(commands.GroupCog, name="cabinet"):
         description="Set your channel/channels where Yeosang can work. It can be changed anytime."
     )
     @app_commands.describe(
-        channel="Choose the channel where Yeosang can work."
+        channel1="Required: choose the main channel where Yeosang can work.",
+        channel2="Optional: choose another Cabinet channel.",
+        channel3="Optional: choose another Cabinet channel.",
+        channel4="Optional: choose another Cabinet channel.",
+        channel5="Optional: choose another Cabinet channel.",
     )
     async def setup(
         self,
         interaction: discord.Interaction,
-        channel: discord.TextChannel,
+        channel1: discord.TextChannel,
+        channel2: discord.TextChannel | None = None,
+        channel3: discord.TextChannel | None = None,
+        channel4: discord.TextChannel | None = None,
+        channel5: discord.TextChannel | None = None,
     ):
+        channels = [
+            channel1,
+            channel2,
+            channel3,
+            channel4,
+            channel5,
+        ]
+
+        selected_channels = [
+            channel for channel in channels
+            if channel is not None
+        ]
+
+        channel_list = "\n".join(
+            f"• {channel.mention}"
+            for channel in selected_channels
+        )
+
         await interaction.response.send_message(
-            f"Yeosang can work in {channel.mention}."
+            "Magic Cabinet setup received!\n\n"
+            "Yeosang can work in:\n"
+            f"{channel_list}"
         )
 
 
