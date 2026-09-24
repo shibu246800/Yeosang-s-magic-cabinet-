@@ -1,1 +1,4 @@
+"""Epic cards. Rarity: ★★★"""
 
+CARDS = [
+]
