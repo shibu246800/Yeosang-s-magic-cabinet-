@@ -1,5 +1,3 @@
-"""Magic Cabinet setup commands."""
-
 import sqlite3
 
 import discord
@@ -11,7 +9,6 @@ DATABASE = "cabinet.db"
 
 
 def initialize_database():
-    """Create the Cabinet database if it does not exist."""
     with sqlite3.connect(DATABASE) as connection:
         connection.execute(
             """
@@ -29,7 +26,6 @@ def initialize_database():
 
 
 class Cabinet(commands.GroupCog, name="cabinet"):
-    """Commands for Magic Cabinet setup."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -37,16 +33,14 @@ class Cabinet(commands.GroupCog, name="cabinet"):
 
     @app_commands.command(
         name="setup",
-        description=(
-            "Set the channel or channels where /drop can be used."
-        ),
+        description="Set the channels where /drop can be used.",
     )
     @app_commands.describe(
-        drop_channel1="Required: choose the first /drop channel.",
-        drop_channel2="Optional: choose a second /drop channel.",
-        drop_channel3="Optional: choose a third /drop channel.",
-        drop_channel4="Optional: choose a fourth /drop channel.",
-        drop_channel5="Optional: choose a fifth /drop channel.",
+        drop_channel1="Required: first /drop channel.",
+        drop_channel2="Optional: second /drop channel.",
+        drop_channel3="Optional: third /drop channel.",
+        drop_channel4="Optional: fourth /drop channel.",
+        drop_channel5="Optional: fifth /drop channel.",
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def setup(
@@ -58,7 +52,6 @@ class Cabinet(commands.GroupCog, name="cabinet"):
         drop_channel4: discord.TextChannel | None = None,
         drop_channel5: discord.TextChannel | None = None,
     ):
-        """Save the channels where /drop is allowed."""
 
         channels = [
             drop_channel1,
@@ -69,11 +62,11 @@ class Cabinet(commands.GroupCog, name="cabinet"):
         ]
 
         selected_channels = [
-            channel for channel in channels
+            channel
+            for channel in channels
             if channel is not None
         ]
 
-        # Remove duplicate channel selections.
         unique_channels = []
         seen_ids = set()
 
@@ -82,7 +75,10 @@ class Cabinet(commands.GroupCog, name="cabinet"):
                 unique_channels.append(channel)
                 seen_ids.add(channel.id)
 
-        channel_ids = [channel.id for channel in unique_channels]
+        channel_ids = [
+            channel.id
+            for channel in unique_channels
+        ]
 
         while len(channel_ids) < 5:
             channel_ids.append(None)
@@ -135,7 +131,6 @@ class Cabinet(commands.GroupCog, name="cabinet"):
         guild_id: int,
         channel_id: int,
     ) -> bool:
-        """Check whether /drop is allowed in this channel."""
 
         with sqlite3.connect(DATABASE) as connection:
             result = connection.execute(
@@ -143,3 +138,26 @@ class Cabinet(commands.GroupCog, name="cabinet"):
                 SELECT
                     channel1_id,
                     channel2_id,
+                    channel3_id,
+                    channel4_id,
+                    channel5_id
+                FROM drop_channels
+                WHERE guild_id = ?
+                """,
+                (guild_id,),
+            ).fetchone()
+
+        if result is None:
+            return False
+
+        drop_channel_ids = [
+            saved_id
+            for saved_id in result
+            if saved_id is not None
+        ]
+
+        return channel_id in drop_channel_ids
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Cabinet(bot))
