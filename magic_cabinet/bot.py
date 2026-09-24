@@ -47,6 +47,7 @@ bot = commands.Bot(
 # Load extensions and sync slash commands
 async def setup_hook():
     await bot.load_extension("magic_cabinet.cogs.cabinet")
+    await bot.load_extension("magic_cabinet.cogs.drop")
     await bot.tree.sync()
 
 
