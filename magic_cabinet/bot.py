@@ -41,6 +41,9 @@ bot = commands.Bot(
 )
 
 
+async def load_cabinet():
+    await bot.load_extension("magic_cabinet.cogs.cabinet")
+
 @bot.event
 async def on_ready():
     print(f"Magic Cabinet is online as {bot.user}")
