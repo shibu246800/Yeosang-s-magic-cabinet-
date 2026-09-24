@@ -20,7 +20,6 @@ async def on_ready():
 
 
 async def load_cogs():
-    await bot.load_extension("cogs.health")
     await bot.load_extension("cogs.cabinet")
 
 
