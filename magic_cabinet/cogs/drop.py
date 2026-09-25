@@ -51,10 +51,10 @@ def format_card(card: dict, number: int) -> str:
     collection = COLLECTIONS[collection_id]
 
     return (
-        f"{number}. {card['stars']} 》"
+        f"**{number}.** {card['stars']} 》"
         f"**{collection['name']}** "
         f"(ID: `{card['id']}`) "
-        f"({collection_id})"
+        f"(`{collection_id}`)"
     )
 
 
@@ -102,14 +102,32 @@ class Drop(commands.Cog):
             choose_card(),
         ]
 
-        card_list = "\n".join(
-            format_card(card, number)
-            for number, card in enumerate(cards, start=1)
-        )
+        embeds = []
+
+        for number, card in enumerate(cards, start=1):
+            collection_id = card["collection_id"]
+            collection = COLLECTIONS[collection_id]
+
+            embed = discord.Embed(
+                title=(
+                    f"{number}. {card['stars']} 》"
+                    f"{collection['name']}"
+                ),
+                description=(
+                    f"**Card ID:** `{card['id']}`\n"
+                    f"**Collection:** `{collection_id}`"
+                ),
+            )
+
+            embed.set_image(url=card["image"])
+
+            embeds.append(embed)
 
         await interaction.response.send_message(
-            f"**Oh {interaction.user.mention} is dropping! Attention!**\n\n"
-            f"{card_list}"
+            content=(
+                f"**Oh {interaction.user.mention} is dropping! Attention!**"
+            ),
+            embeds=embeds,
         )
 
 
