@@ -32,6 +32,10 @@ RARITY_EMOTES = {
 }
 
 
+DROP_CARD_COUNT = 3
+DROP_DURATION = 30
+
+
 def choose_rarity() -> str:
     """Choose a rarity using the configured drop probabilities."""
 
@@ -45,13 +49,46 @@ def choose_rarity() -> str:
     )[0]
 
 
-def choose_card() -> dict:
-    """Choose one random card using the rarity system."""
+def choose_card(excluded_ids: set[int]) -> dict:
+    """Choose a card that is not already used three times."""
 
-    rarity = choose_rarity()
-    available_cards = RARITY_CARDS[rarity]
+    available_cards = [
+        card
+        for cards in RARITY_CARDS.values()
+        for card in cards
+        if card["id"] not in excluded_ids
+    ]
+
+    if not available_cards:
+        raise RuntimeError("No unique cards are available.")
+
+    selected_rarity = choose_rarity()
+
+    rarity_cards = [
+        card
+        for card in RARITY_CARDS[selected_rarity]
+        if card["id"] not in excluded_ids
+    ]
+
+    if rarity_cards:
+        return random.choice(rarity_cards)
 
     return random.choice(available_cards)
+
+
+def choose_drop_cards() -> list[dict]:
+    """Choose three cards without allowing three identical cards."""
+
+    cards = []
+    used_ids = set()
+
+    for _ in range(DROP_CARD_COUNT):
+        card = choose_card(used_ids)
+
+        cards.append(card)
+        used_ids.add(card["id"])
+
+    return cards
 
 
 def format_card(card: dict) -> str:
@@ -60,9 +97,9 @@ def format_card(card: dict) -> str:
     rarity_emote = RARITY_EMOTES[card["stars"]]
 
     return (
-        f"{rarity_emote} "
-        f"-#**Card ID : `{card['id']}`** "
-        f"**Collection: `{card['collection_id']}`**"
+        f"{rarity_emote} ❖ "
+        f"**Card ID : `{card['id']}`**  ·  "
+        f"**Collection : `{card['collection_id']}`**"
     )
 
 
@@ -92,7 +129,7 @@ class CardDropView(discord.ui.View):
     """Buttons for the three dropped cards."""
 
     def __init__(self, cards: list[dict]):
-        super().__init__(timeout=60)
+        super().__init__(timeout=DROP_DURATION)
 
         for number, card in enumerate(cards, start=1):
             self.add_item(CardButton(card, number))
@@ -136,11 +173,7 @@ class Drop(commands.Cog):
             )
             return
 
-        cards = [
-            choose_card(),
-            choose_card(),
-            choose_card(),
-        ]
+        cards = choose_drop_cards()
 
         card_information = "\n".join(
             format_card(card)
@@ -155,7 +188,15 @@ class Drop(commands.Cog):
         )
 
         embed = discord.Embed(
-            description=card_information,
+            description=(
+                "╭─ ⋆⋅☆⋅⋆ ─╮\n"
+                "**This drop is active for 30 seconds.**\n"
+                "Unlimited players can participate, but the "
+                "drop owner's authority stays put.\n"
+                "╰─ ⋆⋅☆⋅⋆ ─╯\n\n"
+                f"{card_information}"
+            ),
+            color=discord.Color.from_rgb(212, 175, 55),
         )
 
         embed.set_image(
