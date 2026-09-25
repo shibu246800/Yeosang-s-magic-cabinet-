@@ -6,23 +6,27 @@ import aiohttp
 from PIL import Image, ImageDraw
 
 
-# Larger cards
+# Actual card size
 CARD_WIDTH = 450
 CARD_HEIGHT = 630
+
+# Slightly larger white template around each card
+TEMPLATE_WIDTH = 480
+TEMPLATE_HEIGHT = 660
 
 # Wide, clean space between cards
 CARD_GAP = 70
 
-# Plain white canvas
+# Plain white template
 BACKGROUND = (255, 255, 255)
 
-# Metallic-gold inspired decoration
+# Metallic-gold decoration
 GOLD = (212, 175, 55)
 LIGHT_GOLD = (238, 220, 160)
 
 
 async def create_card_strip(cards: list[dict]) -> BytesIO:
-    """Download cards and create a large clean card display."""
+    """Download cards and create a clean card display."""
 
     images = []
 
@@ -36,33 +40,47 @@ async def create_card_strip(cards: list[dict]) -> BytesIO:
                 BytesIO(image_data)
             ).convert("RGB")
 
-            # Make the card as large as possible
-            # without cropping or changing it.
+            # Keep the original card proportions.
             image.thumbnail(
                 (CARD_WIDTH, CARD_HEIGHT)
             )
 
+            # Slightly larger template behind the card.
             canvas = Image.new(
                 "RGB",
-                (CARD_WIDTH, CARD_HEIGHT),
+                (
+                    TEMPLATE_WIDTH,
+                    TEMPLATE_HEIGHT,
+                ),
                 BACKGROUND,
             )
 
-            x = (CARD_WIDTH - image.width) // 2
-            y = (CARD_HEIGHT - image.height) // 2
+            x = (
+                TEMPLATE_WIDTH - image.width
+            ) // 2
 
-            canvas.paste(image, (x, y))
+            y = (
+                TEMPLATE_HEIGHT - image.height
+            ) // 2
+
+            canvas.paste(
+                image,
+                (x, y),
+            )
 
             images.append(canvas)
 
     total_width = (
-        CARD_WIDTH * len(images)
+        TEMPLATE_WIDTH * len(images)
         + CARD_GAP * (len(images) - 1)
     )
 
     strip = Image.new(
         "RGB",
-        (total_width, CARD_HEIGHT),
+        (
+            total_width,
+            TEMPLATE_HEIGHT,
+        ),
         BACKGROUND,
     )
 
@@ -71,18 +89,21 @@ async def create_card_strip(cards: list[dict]) -> BytesIO:
     x = 0
 
     for index, image in enumerate(images):
-        strip.paste(image, (x, 0))
+        strip.paste(
+            image,
+            (x, 0),
+        )
 
         if index < len(images) - 1:
             ornament_x = (
                 x
-                + CARD_WIDTH
+                + TEMPLATE_WIDTH
                 + CARD_GAP // 2
             )
 
-            ornament_y = CARD_HEIGHT // 2
+            ornament_y = TEMPLATE_HEIGHT // 2
 
-            # Tiny side dots
+            # Tiny side dots.
             draw.ellipse(
                 (
                     ornament_x - 14,
@@ -103,7 +124,7 @@ async def create_card_strip(cards: list[dict]) -> BytesIO:
                 fill=LIGHT_GOLD,
             )
 
-            # Elegant four-point star
+            # Elegant four-point star.
             draw.polygon(
                 [
                     (
@@ -142,7 +163,10 @@ async def create_card_strip(cards: list[dict]) -> BytesIO:
                 fill=GOLD,
             )
 
-        x += CARD_WIDTH + CARD_GAP
+        x += (
+            TEMPLATE_WIDTH
+            + CARD_GAP
+        )
 
     output = BytesIO()
 
