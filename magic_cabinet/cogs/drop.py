@@ -49,8 +49,11 @@ def choose_rarity() -> str:
     )[0]
 
 
-def choose_card(used_counts: dict[int, int]) -> dict:
-    """Choose a card while preventing three identical cards."""
+def choose_card(
+    used_counts: dict[int, int],
+    prefer_unique: bool = True,
+) -> dict:
+    """Choose a card."""
 
     all_cards = [
         card
@@ -60,14 +63,26 @@ def choose_card(used_counts: dict[int, int]) -> dict:
 
     selected_rarity = choose_rarity()
 
-    rarity_cards = [
+    rarity_cards = RARITY_CARDS[selected_rarity]
+
+    if prefer_unique:
+        unique_rarity_cards = [
+            card
+            for card in rarity_cards
+            if used_counts.get(card["id"], 0) == 0
+        ]
+
+        if unique_rarity_cards:
+            return random.choice(unique_rarity_cards)
+
+    available_rarity_cards = [
         card
-        for card in RARITY_CARDS[selected_rarity]
+        for card in rarity_cards
         if used_counts.get(card["id"], 0) < 2
     ]
 
-    if rarity_cards:
-        return random.choice(rarity_cards)
+    if available_rarity_cards:
+        return random.choice(available_rarity_cards)
 
     available_cards = [
         card
@@ -84,17 +99,21 @@ def choose_card(used_counts: dict[int, int]) -> dict:
 
 
 def choose_drop_cards() -> list[dict]:
-    """Choose three cards while allowing at most two copies."""
+    """Choose three cards, normally keeping all three different."""
 
     cards = []
     used_counts = {}
 
-    for _ in range(DROP_CARD_COUNT):
-        card = choose_card(used_counts)
+    for position in range(DROP_CARD_COUNT):
+        card = choose_card(
+            used_counts,
+            prefer_unique=position < 2,
+        )
 
         cards.append(card)
 
         card_id = card["id"]
+
         used_counts[card_id] = (
             used_counts.get(card_id, 0) + 1
         )
@@ -125,7 +144,7 @@ def format_card(card: dict) -> str:
     return (
         f"{rarity_emote} ❖ "
         f"**Card ID : `{card['id']}`**  ·  "
-        f"**Collection : `{card['collection_id']}` "
+        f"**Collection : `{card['collection_id']}`** "
         f"· *{collection_name}*"
     )
 
