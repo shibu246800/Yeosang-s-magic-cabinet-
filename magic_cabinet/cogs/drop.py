@@ -117,6 +117,7 @@ def format_card(card: dict) -> str:
     """Format one card's information."""
 
     rarity_emote = RARITY_EMOTES[card["stars"]]
+
     collection_name = get_collection_name(
         card["collection_id"]
     )
@@ -124,7 +125,7 @@ def format_card(card: dict) -> str:
     return (
         f"{rarity_emote} ❖ "
         f"**Card ID : `{card['id']}`**  ·  "
-        f"**Collection : `{card['collection_id']}`** "
+        f"**Collection : `{card['collection_id']}` "
         f"· *{collection_name}*"
     )
 
@@ -275,4 +276,7 @@ class Drop(commands.Cog):
         if cabinet is None:
             await interaction.response.send_message(
                 "Magic Cabinet setup is currently unavailable."
-    )
+            )
+            return
+
+        if interaction.guild_id
