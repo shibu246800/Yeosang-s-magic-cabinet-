@@ -64,7 +64,6 @@ def choose_drop_cards() -> list[dict]:
         )
 
     selected_cards = []
-
     available_cards = all_cards.copy()
 
     for _ in range(DROP_CARD_COUNT):
@@ -86,7 +85,6 @@ def choose_drop_cards() -> list[dict]:
             )
 
         selected_cards.append(selected_card)
-
         available_cards.remove(selected_card)
 
     return selected_cards
@@ -140,7 +138,6 @@ class CardButton(discord.ui.Button):
         self.number = number
         self.owner_id = owner_id
         self.card_view = view
-
         self.claim_count = 0
 
         rarity_emote = RARITY_EMOTES[
@@ -211,9 +208,7 @@ class CardDropView(discord.ui.View):
 
         self.cards = cards
         self.owner_id = owner_id
-
         self.claimed_users: set[int] = set()
-
         self.expired = False
         self.message: discord.Message | None = None
 
@@ -291,52 +286,3 @@ class Drop(commands.Cog):
             return
 
         if interaction.guild_id is None:
-            await interaction.response.send_message(
-                "This command can only be used inside a server."
-            )
-            return
-
-        allowed = cabinet.is_drop_channel(
-            interaction.guild_id,
-            interaction.channel_id,
-        )
-
-        if not allowed:
-            await interaction.response.send_message(
-                "This command can only be used in "
-                "a configured Drop channel."
-            )
-            return
-
-        await interaction.response.defer()
-
-        cards = choose_drop_cards()
-
-        card_information = "\n".join(
-            format_card(card)
-            for card in cards
-        )
-
-        card_strip = await create_card_strip(
-            cards
-        )
-
-        file = discord.File(
-            card_strip,
-            filename="cabinet_drop.png",
-        )
-
-        embed = discord.Embed(
-            description=(
-                "╭─ ⋆⋅☆⋅⋆ ─╮\n"
-                "**This drop is active for 30 seconds.**\n"
-                "Unlimited players can participate, but the "
-                "drop owner's authority stays put.\n"
-                "╰─ ⋆⋅☆⋅⋆ ─╯\n\n"
-                f"{card_information}"
-            ),
-            color=discord.Color.from_rgb(
-                212,
-                175,
-                55,
-            ),
