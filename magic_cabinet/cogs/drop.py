@@ -22,6 +22,15 @@ RARITY_CARDS = {
 }
 
 
+RARITY_EMOTES = {
+    "★": "<:silver_normal:1552761791606689933>",
+    "★★": "<:sapphire_rare:1552761835587899513>",
+    "★★★": "<:eclipse_epic:1552761873076850758>",
+    "★★★★": "<:bloodrose_limited:1552761891472810144>",
+    "★★★★★": "<:golden_legendary:1552761908652671056>",
+}
+
+
 def choose_rarity() -> str:
     """Choose a rarity using the configured drop probabilities."""
 
@@ -49,9 +58,10 @@ def format_card(card: dict, number: int) -> str:
 
     collection_id = card["collection_id"]
     collection = COLLECTIONS[collection_id]
+    rarity_emote = RARITY_EMOTES[card["stars"]]
 
     return (
-        f"**{number}.** {card['stars']} 》"
+        f"**{number}.** {rarity_emote} 》"
         f"**{collection['name']}** "
         f"(ID: `{card['id']}`) "
         f"(`{collection_id}`)"
@@ -107,10 +117,11 @@ class Drop(commands.Cog):
         for number, card in enumerate(cards, start=1):
             collection_id = card["collection_id"]
             collection = COLLECTIONS[collection_id]
+            rarity_emote = RARITY_EMOTES[card["stars"]]
 
             embed = discord.Embed(
                 title=(
-                    f"{number}. {card['stars']} 》"
+                    f"{number}. {rarity_emote} 》"
                     f"{collection['name']}"
                 ),
                 description=(
