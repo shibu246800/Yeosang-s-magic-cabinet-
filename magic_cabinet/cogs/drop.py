@@ -35,9 +35,6 @@ RARITY_EMOTES = {
 DROP_CARD_COUNT = 3
 DROP_DURATION = 30
 
-# Reserved visual space for the future Bag ownership emote.
-OWNER_BAG_SPACE = "\u2003\u2003\u2003"
-
 
 def choose_rarity() -> str:
     """Choose a rarity using the configured drop probabilities."""
@@ -52,11 +49,8 @@ def choose_rarity() -> str:
     )[0]
 
 
-def choose_card(
-    used_counts: dict[int, int],
-    prefer_unique: bool = True,
-) -> dict:
-    """Choose a card."""
+def choose_drop_cards() -> list[dict]:
+    """Choose three different cards."""
 
     all_cards = [
         card
@@ -64,72 +58,38 @@ def choose_card(
         for card in cards
     ]
 
-    selected_rarity = choose_rarity()
+    if len(all_cards) < DROP_CARD_COUNT:
+        raise RuntimeError(
+            "There are not enough cards for this drop."
+        )
 
-    rarity_cards = RARITY_CARDS[selected_rarity]
+    selected_cards = []
 
-    if prefer_unique:
-        unique_rarity_cards = [
+    available_cards = all_cards.copy()
+
+    for _ in range(DROP_CARD_COUNT):
+        selected_rarity = choose_rarity()
+
+        rarity_cards = [
             card
-            for card in rarity_cards
-            if used_counts.get(card["id"], 0) == 0
+            for card in available_cards
+            if card["stars"] == selected_rarity
         ]
 
-        if unique_rarity_cards:
-            return random.choice(
-                unique_rarity_cards
+        if rarity_cards:
+            selected_card = random.choice(
+                rarity_cards
+            )
+        else:
+            selected_card = random.choice(
+                available_cards
             )
 
-    available_rarity_cards = [
-        card
-        for card in rarity_cards
-        if used_counts.get(card["id"], 0) < 2
-    ]
+        selected_cards.append(selected_card)
 
-    if available_rarity_cards:
-        return random.choice(
-            available_rarity_cards
-        )
+        available_cards.remove(selected_card)
 
-    available_cards = [
-        card
-        for card in all_cards
-        if used_counts.get(card["id"], 0) < 2
-    ]
-
-    if not available_cards:
-        raise RuntimeError(
-            "Not enough cards are available for this drop."
-        )
-
-    return random.choice(
-        available_cards
-    )
-
-
-def choose_drop_cards() -> list[dict]:
-    """Choose three cards, normally keeping all three different."""
-
-    cards = []
-    used_counts = {}
-
-    for position in range(
-        DROP_CARD_COUNT
-    ):
-        card = choose_card(
-            used_counts,
-            prefer_unique=position < 2,
-        )
-
-        cards.append(card)
-
-        card_id = card["id"]
-
-        used_counts[card_id] = (
-            used_counts.get(card_id, 0) + 1
-        )
-
-    return cards
+    return selected_cards
 
 
 def get_collection_name(
@@ -163,7 +123,6 @@ def format_card(card: dict) -> str:
         f"**Card ID : `{card['id']}`**  ·  "
         f"**CL : `{card['collection_id']}`** "
         f"· *{collection_name}*"
-        f"{OWNER_BAG_SPACE}"
     )
 
 
@@ -182,12 +141,14 @@ class CardButton(discord.ui.Button):
         self.owner_id = owner_id
         self.card_view = view
 
+        self.claim_count = 0
+
         rarity_emote = RARITY_EMOTES[
             card["stars"]
         ]
 
         super().__init__(
-            label=f"{number}",
+            label="0",
             emoji=discord.PartialEmoji.from_str(
                 rarity_emote
             ),
@@ -211,42 +172,29 @@ class CardButton(discord.ui.Button):
             )
             return
 
-        if self.card_view.claimed[
-            self.number
-        ]:
+        if interaction.user.id in self.card_view.claimed_users:
             await interaction.response.send_message(
-                "This card has already been claimed.",
+                "You have already claimed a card from this drop.",
                 ephemeral=True,
             )
             return
 
-        winner = interaction.user
+        self.card_view.claimed_users.add(
+            interaction.user.id
+        )
 
-        self.card_view.claimed[
-            self.number
-        ] = winner
+        self.claim_count += 1
 
-        self.disabled = True
-
-        for item in self.card_view.children:
-            if isinstance(
-                item,
-                CardButton,
-            ):
-                if self.card_view.claimed[
-                    item.number
-                ]:
-                    item.disabled = True
+        self.label = str(
+            self.claim_count
+        )
 
         await interaction.response.send_message(
-            f"🎴 {winner.mention} got "
+            f"🎴 {interaction.user.mention} got "
             f"**Card ID : `{self.card['id']}`**!"
         )
 
-        if self.card_view.message is not None:
-            await self.card_view.message.edit(
-                view=self.card_view
-            )
+        await self.card_view.update_buttons()
 
 
 class CardDropView(discord.ui.View):
@@ -264,11 +212,7 @@ class CardDropView(discord.ui.View):
         self.cards = cards
         self.owner_id = owner_id
 
-        self.claimed = {
-            1: None,
-            2: None,
-            3: None,
-        }
+        self.claimed_users: set[int] = set()
 
         self.expired = False
         self.message: discord.Message | None = None
@@ -285,6 +229,16 @@ class CardDropView(discord.ui.View):
                     self,
                 )
             )
+
+    async def update_buttons(self):
+        """Update button labels after a claim."""
+
+        if self.message is None:
+            return
+
+        await self.message.edit(
+            view=self
+        )
 
     async def on_timeout(self):
         """Disable all buttons when the drop expires."""
@@ -386,34 +340,3 @@ class Drop(commands.Cog):
                 175,
                 55,
             ),
-        )
-
-        embed.set_image(
-            url="attachment://cabinet_drop.png"
-        )
-
-        view = CardDropView(
-            cards,
-            interaction.user.id,
-        )
-
-        message = await interaction.followup.send(
-            content=(
-                f"**Oh {interaction.user.mention} is "
-                f"dropping! Attention!**"
-            ),
-            embed=embed,
-            file=file,
-            view=view,
-            wait=True,
-        )
-
-        view.message = message
-
-
-async def setup(
-    bot: commands.Bot,
-):
-    await bot.add_cog(
-        Drop(bot)
-    )
