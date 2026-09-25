@@ -6,27 +6,23 @@ import aiohttp
 from PIL import Image, ImageDraw
 
 
-# Actual card size
 CARD_WIDTH = 450
 CARD_HEIGHT = 630
 
-# Slightly larger white template around each card
 TEMPLATE_WIDTH = 480
 TEMPLATE_HEIGHT = 660
 
-# Wide, clean space between cards
 CARD_GAP = 70
 
-# Plain white template
-BACKGROUND = (255, 255, 255)
+# Transparent background
+BACKGROUND = (0, 0, 0, 0)
 
-# Metallic-gold decoration
-GOLD = (212, 175, 55)
-LIGHT_GOLD = (238, 220, 160)
+GOLD = (212, 175, 55, 255)
+LIGHT_GOLD = (238, 220, 160, 255)
 
 
 async def create_card_strip(cards: list[dict]) -> BytesIO:
-    """Download cards and create a clean card display."""
+    """Download cards and create a transparent card display."""
 
     images = []
 
@@ -38,16 +34,14 @@ async def create_card_strip(cards: list[dict]) -> BytesIO:
 
             image = Image.open(
                 BytesIO(image_data)
-            ).convert("RGB")
+            ).convert("RGBA")
 
-            # Keep the original card proportions.
             image.thumbnail(
                 (CARD_WIDTH, CARD_HEIGHT)
             )
 
-            # Slightly larger template behind the card.
             canvas = Image.new(
-                "RGB",
+                "RGBA",
                 (
                     TEMPLATE_WIDTH,
                     TEMPLATE_HEIGHT,
@@ -66,6 +60,7 @@ async def create_card_strip(cards: list[dict]) -> BytesIO:
             canvas.paste(
                 image,
                 (x, y),
+                image,
             )
 
             images.append(canvas)
@@ -76,7 +71,7 @@ async def create_card_strip(cards: list[dict]) -> BytesIO:
     )
 
     strip = Image.new(
-        "RGB",
+        "RGBA",
         (
             total_width,
             TEMPLATE_HEIGHT,
@@ -89,7 +84,7 @@ async def create_card_strip(cards: list[dict]) -> BytesIO:
     x = 0
 
     for index, image in enumerate(images):
-        strip.paste(
+        strip.alpha_composite(
             image,
             (x, 0),
         )
@@ -103,7 +98,6 @@ async def create_card_strip(cards: list[dict]) -> BytesIO:
 
             ornament_y = TEMPLATE_HEIGHT // 2
 
-            # Tiny side dots.
             draw.ellipse(
                 (
                     ornament_x - 14,
@@ -124,7 +118,6 @@ async def create_card_strip(cards: list[dict]) -> BytesIO:
                 fill=LIGHT_GOLD,
             )
 
-            # Elegant four-point star.
             draw.polygon(
                 [
                     (
