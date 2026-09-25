@@ -35,6 +35,9 @@ RARITY_EMOTES = {
 DROP_CARD_COUNT = 3
 DROP_DURATION = 30
 
+# Reserved visual space for the future Bag ownership emote.
+OWNER_BAG_SPACE = "\u2003\u2003\u2003"
+
 
 def choose_rarity() -> str:
     """Choose a rarity using the configured drop probabilities."""
@@ -73,7 +76,9 @@ def choose_card(
         ]
 
         if unique_rarity_cards:
-            return random.choice(unique_rarity_cards)
+            return random.choice(
+                unique_rarity_cards
+            )
 
     available_rarity_cards = [
         card
@@ -82,7 +87,9 @@ def choose_card(
     ]
 
     if available_rarity_cards:
-        return random.choice(available_rarity_cards)
+        return random.choice(
+            available_rarity_cards
+        )
 
     available_cards = [
         card
@@ -95,7 +102,9 @@ def choose_card(
             "Not enough cards are available for this drop."
         )
 
-    return random.choice(available_cards)
+    return random.choice(
+        available_cards
+    )
 
 
 def choose_drop_cards() -> list[dict]:
@@ -104,7 +113,9 @@ def choose_drop_cards() -> list[dict]:
     cards = []
     used_counts = {}
 
-    for position in range(DROP_CARD_COUNT):
+    for position in range(
+        DROP_CARD_COUNT
+    ):
         card = choose_card(
             used_counts,
             prefer_unique=position < 2,
@@ -121,10 +132,14 @@ def choose_drop_cards() -> list[dict]:
     return cards
 
 
-def get_collection_name(collection_id: str) -> str:
+def get_collection_name(
+    collection_id: str,
+) -> str:
     """Return the collection name."""
 
-    collection = COLLECTIONS.get(collection_id)
+    collection = COLLECTIONS.get(
+        collection_id
+    )
 
     if collection is None:
         return "Unknown Collection"
@@ -135,7 +150,9 @@ def get_collection_name(collection_id: str) -> str:
 def format_card(card: dict) -> str:
     """Format one card's information."""
 
-    rarity_emote = RARITY_EMOTES[card["stars"]]
+    rarity_emote = RARITY_EMOTES[
+        card["stars"]
+    ]
 
     collection_name = get_collection_name(
         card["collection_id"]
@@ -144,8 +161,9 @@ def format_card(card: dict) -> str:
     return (
         f"{rarity_emote} ❖ "
         f"**Card ID : `{card['id']}`**  ·  "
-        f"**Collection : `{card['collection_id']}`** "
+        f"**CL : `{card['collection_id']}`** "
         f"· *{collection_name}*"
+        f"{OWNER_BAG_SPACE}"
     )
 
 
@@ -164,7 +182,9 @@ class CardButton(discord.ui.Button):
         self.owner_id = owner_id
         self.card_view = view
 
-        rarity_emote = RARITY_EMOTES[card["stars"]]
+        rarity_emote = RARITY_EMOTES[
+            card["stars"]
+        ]
 
         super().__init__(
             label=f"{number}",
@@ -173,7 +193,8 @@ class CardButton(discord.ui.Button):
             ),
             style=discord.ButtonStyle.secondary,
             custom_id=(
-                f"cabinet_card_{card['id']}_{number}"
+                f"cabinet_card_"
+                f"{card['id']}_{number}"
             ),
         )
 
@@ -190,7 +211,9 @@ class CardButton(discord.ui.Button):
             )
             return
 
-        if self.card_view.claimed[self.number]:
+        if self.card_view.claimed[
+            self.number
+        ]:
             await interaction.response.send_message(
                 "This card has already been claimed.",
                 ephemeral=True,
@@ -199,13 +222,20 @@ class CardButton(discord.ui.Button):
 
         winner = interaction.user
 
-        self.card_view.claimed[self.number] = winner
+        self.card_view.claimed[
+            self.number
+        ] = winner
 
         self.disabled = True
 
         for item in self.card_view.children:
-            if isinstance(item, CardButton):
-                if self.card_view.claimed[item.number]:
+            if isinstance(
+                item,
+                CardButton,
+            ):
+                if self.card_view.claimed[
+                    item.number
+                ]:
                     item.disabled = True
 
         await interaction.response.send_message(
@@ -262,7 +292,10 @@ class CardDropView(discord.ui.View):
         self.expired = True
 
         for item in self.children:
-            if isinstance(item, CardButton):
+            if isinstance(
+                item,
+                CardButton,
+            ):
                 item.disabled = True
 
         if self.message is not None:
@@ -282,7 +315,10 @@ class Drop(commands.Cog):
 
     @app_commands.command(
         name="drop",
-        description="Drop three cards from the Magic Cabinet.",
+        description=(
+            "Drop three cards from "
+            "the Magic Cabinet."
+        ),
     )
     async def drop(
         self,
@@ -290,7 +326,9 @@ class Drop(commands.Cog):
     ):
         """Handle the /drop command."""
 
-        cabinet = self.bot.get_cog("cabinet")
+        cabinet = self.bot.get_cog(
+            "cabinet"
+        )
 
         if cabinet is None:
             await interaction.response.send_message(
@@ -325,7 +363,9 @@ class Drop(commands.Cog):
             for card in cards
         )
 
-        card_strip = await create_card_strip(cards)
+        card_strip = await create_card_strip(
+            cards
+        )
 
         file = discord.File(
             card_strip,
@@ -371,5 +411,9 @@ class Drop(commands.Cog):
         view.message = message
 
 
-async def setup(bot: commands.Bot):
-    await bot.add_cog(Drop(bot))
+async def setup(
+    bot: commands.Bot,
+):
+    await bot.add_cog(
+        Drop(bot)
+    )
