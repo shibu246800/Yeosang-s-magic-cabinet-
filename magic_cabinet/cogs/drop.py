@@ -6,6 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from magic_cabinet.card_display import create_card_strip
 from magic_cabinet.data.collections import COLLECTIONS
 from magic_cabinet.data.drop_rates import DROP_RATES
 from magic_cabinet.data.epic import CARDS as EPIC_CARDS
@@ -53,19 +54,48 @@ def choose_card() -> dict:
     return random.choice(available_cards)
 
 
-def format_card(card: dict, number: int) -> str:
-    """Format one dropped card for display."""
+def format_card(card: dict) -> str:
+    """Format one card's information."""
 
     collection_id = card["collection_id"]
-    collection = COLLECTIONS[collection_id]
     rarity_emote = RARITY_EMOTES[card["stars"]]
 
     return (
-        f"**{number}.** {rarity_emote} 》"
-        f"**{collection['name']}** "
-        f"(ID: `{card['id']}`) "
-        f"(`{collection_id}`)"
+        f"{rarity_emote} **Card ID : {card['id']}** "
+        f"**Collection: {collection_id}**"
     )
+
+
+class CardButton(discord.ui.Button):
+    """Button for one dropped card."""
+
+    def __init__(self, card: dict, number: int):
+        self.card = card
+
+        rarity_emote = RARITY_EMOTES[card["stars"]]
+
+        super().__init__(
+            label=f"{number}",
+            emoji=discord.PartialEmoji.from_str(rarity_emote),
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"cabinet_card_{card['id']}_{number}",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_message(
+            f"You selected **Card ID : {self.card['id']}**.",
+            ephemeral=True,
+        )
+
+
+class CardDropView(discord.ui.View):
+    """Buttons for the three dropped cards."""
+
+    def __init__(self, cards: list[dict]):
+        super().__init__(timeout=60)
+
+        for number, card in enumerate(cards, start=1):
+            self.add_item(CardButton(card, number))
 
 
 class Drop(commands.Cog):
@@ -112,33 +142,36 @@ class Drop(commands.Cog):
             choose_card(),
         ]
 
-        embeds = []
+        card_information = "\n".join(
+            format_card(card)
+            for card in cards
+        )
 
-        for number, card in enumerate(cards, start=1):
-            collection_id = card["collection_id"]
-            collection = COLLECTIONS[collection_id]
-            rarity_emote = RARITY_EMOTES[card["stars"]]
+        card_strip = await create_card_strip(cards)
 
-            embed = discord.Embed(
-                title=(
-                    f"{number}. {rarity_emote} 》"
-                    f"{collection['name']}"
-                ),
-                description=(
-                    f"**Card ID:** `{card['id']}`\n"
-                    f"**Collection:** `{collection_id}`"
-                ),
-            )
+        file = discord.File(
+            card_strip,
+            filename="cabinet_drop.png",
+        )
 
-            embed.set_image(url=card["image"])
+        embed = discord.Embed(
+            description=card_information,
+        )
 
-            embeds.append(embed)
+        embed.set_image(
+            url="attachment://cabinet_drop.png"
+        )
+
+        view = CardDropView(cards)
 
         await interaction.response.send_message(
             content=(
-                f"**Oh {interaction.user.mention} is dropping! Attention!**"
+                f"**Oh {interaction.user.mention} is dropping! "
+                f"Attention!**"
             ),
-            embeds=embeds,
+            embed=embed,
+            file=file,
+            view=view,
         )
 
 
