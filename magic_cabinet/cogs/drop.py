@@ -279,4 +279,78 @@ class Drop(commands.Cog):
             )
             return
 
-        if interaction.guild_id
+        if interaction.guild_id is None:
+            await interaction.response.send_message(
+                "This command can only be used inside a server."
+            )
+            return
+
+        allowed = cabinet.is_drop_channel(
+            interaction.guild_id,
+            interaction.channel_id,
+        )
+
+        if not allowed:
+            await interaction.response.send_message(
+                "This command can only be used in "
+                "a configured Drop channel."
+            )
+            return
+
+        await interaction.response.defer()
+
+        cards = choose_drop_cards()
+
+        card_information = "\n".join(
+            format_card(card)
+            for card in cards
+        )
+
+        card_strip = await create_card_strip(cards)
+
+        file = discord.File(
+            card_strip,
+            filename="cabinet_drop.png",
+        )
+
+        embed = discord.Embed(
+            description=(
+                "╭─ ⋆⋅☆⋅⋆ ─╮\n"
+                "**This drop is active for 30 seconds.**\n"
+                "Unlimited players can participate, but the "
+                "drop owner's authority stays put.\n"
+                "╰─ ⋆⋅☆⋅⋆ ─╯\n\n"
+                f"{card_information}"
+            ),
+            color=discord.Color.from_rgb(
+                212,
+                175,
+                55,
+            ),
+        )
+
+        embed.set_image(
+            url="attachment://cabinet_drop.png"
+        )
+
+        view = CardDropView(
+            cards,
+            interaction.user.id,
+        )
+
+        message = await interaction.followup.send(
+            content=(
+                f"**Oh {interaction.user.mention} is "
+                f"dropping! Attention!**"
+            ),
+            embed=embed,
+            file=file,
+            view=view,
+            wait=True,
+        )
+
+        view.message = message
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Drop(bot))
