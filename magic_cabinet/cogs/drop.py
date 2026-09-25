@@ -49,44 +49,53 @@ def choose_rarity() -> str:
     )[0]
 
 
-def choose_card(excluded_ids: set[int]) -> dict:
-    """Choose a card that is not already used three times."""
+def choose_card(used_counts: dict[int, int]) -> dict:
+    """Choose a card while preventing three identical cards."""
 
-    available_cards = [
+    all_cards = [
         card
         for cards in RARITY_CARDS.values()
         for card in cards
-        if card["id"] not in excluded_ids
     ]
-
-    if not available_cards:
-        raise RuntimeError("No unique cards are available.")
 
     selected_rarity = choose_rarity()
 
     rarity_cards = [
         card
         for card in RARITY_CARDS[selected_rarity]
-        if card["id"] not in excluded_ids
+        if used_counts.get(card["id"], 0) < 2
     ]
 
     if rarity_cards:
         return random.choice(rarity_cards)
 
+    available_cards = [
+        card
+        for card in all_cards
+        if used_counts.get(card["id"], 0) < 2
+    ]
+
+    if not available_cards:
+        raise RuntimeError(
+            "Not enough cards are available for this drop."
+        )
+
     return random.choice(available_cards)
 
 
 def choose_drop_cards() -> list[dict]:
-    """Choose three cards without allowing three identical cards."""
+    """Choose three cards while allowing at most two copies."""
 
     cards = []
-    used_ids = set()
+    used_counts = {}
 
     for _ in range(DROP_CARD_COUNT):
-        card = choose_card(used_ids)
+        card = choose_card(used_counts)
 
         cards.append(card)
-        used_ids.add(card["id"])
+
+        card_id = card["id"]
+        used_counts[card_id] = used_counts.get(card_id, 0) + 1
 
     return cards
 
@@ -106,8 +115,17 @@ def format_card(card: dict) -> str:
 class CardButton(discord.ui.Button):
     """Button for one dropped card."""
 
-    def __init__(self, card: dict, number: int):
+    def __init__(
+        self,
+        card: dict,
+        number: int,
+        owner_id: int,
+        view: "CardDropView",
+    ):
         self.card = card
+        self.number = number
+        self.owner_id = owner_id
+        self.card_view = view
 
         rarity_emote = RARITY_EMOTES[card["stars"]]
 
@@ -118,21 +136,93 @@ class CardButton(discord.ui.Button):
             custom_id=f"cabinet_card_{card['id']}_{number}",
         )
 
-    async def callback(self, interaction: discord.Interaction):
+    async def callback(
+        self,
+        interaction: discord.Interaction,
+    ):
+        """Handle a card claim."""
+
+        if self.card_view.expired:
+            await interaction.response.send_message(
+                "This drop has already ended.",
+                ephemeral=True,
+            )
+            return
+
+        if self.card_view.claimed[self.number]:
+            await interaction.response.send_message(
+                "This card has already been claimed.",
+                ephemeral=True,
+            )
+            return
+
+        # The drop owner has priority when they claim a card.
+        if interaction.user.id == self.owner_id:
+            winner = interaction.user
+
+        else:
+            # The first valid non-owner click wins.
+            winner = interaction.user
+
+        self.card_view.claimed[self.number] = winner
+
+        self.disabled = True
+
+        for item in self.card_view.children:
+            if isinstance(item, CardButton):
+                if self.card_view.claimed[item.number]:
+                    item.disabled = True
+
         await interaction.response.send_message(
-            f"You selected **Card ID : {self.card['id']}**.",
-            ephemeral=True,
+            f"🎴 {winner.mention} got **Card ID : `{self.card['id']}`**!",
+        )
+
+        await self.card_view.message.edit(
+            view=self.card_view,
         )
 
 
 class CardDropView(discord.ui.View):
     """Buttons for the three dropped cards."""
 
-    def __init__(self, cards: list[dict]):
+    def __init__(
+        self,
+        cards: list[dict],
+        owner_id: int,
+    ):
         super().__init__(timeout=DROP_DURATION)
 
+        self.cards = cards
+        self.owner_id = owner_id
+        self.claimed = {
+            1: None,
+            2: None,
+            3: None,
+        }
+        self.expired = False
+        self.message: discord.Message | None = None
+
         for number, card in enumerate(cards, start=1):
-            self.add_item(CardButton(card, number))
+            self.add_item(
+                CardButton(
+                    card,
+                    number,
+                    owner_id,
+                    self,
+                )
+            )
+
+    async def on_timeout(self):
+        """Disable all buttons when the drop expires."""
+
+        self.expired = True
+
+        for item in self.children:
+            if isinstance(item, CardButton):
+                item.disabled = True
+
+        if self.message is not None:
+            await self.message.edit(view=self)
 
 
 class Drop(commands.Cog):
@@ -173,6 +263,10 @@ class Drop(commands.Cog):
             )
             return
 
+        # Acknowledge immediately so Discord does not expire
+        # the slash-command interaction while the card image is created.
+        await interaction.response.defer()
+
         cards = choose_drop_cards()
 
         card_information = "\n".join(
@@ -203,9 +297,12 @@ class Drop(commands.Cog):
             url="attachment://cabinet_drop.png"
         )
 
-        view = CardDropView(cards)
+        view = CardDropView(
+            cards,
+            interaction.user.id,
+        )
 
-        await interaction.response.send_message(
+        message = await interaction.followup.send(
             content=(
                 f"**Oh {interaction.user.mention} is dropping! "
                 f"Attention!**"
@@ -213,7 +310,10 @@ class Drop(commands.Cog):
             embed=embed,
             file=file,
             view=view,
+            wait=True,
         )
+
+        view.message = message
 
 
 async def setup(bot: commands.Bot):
