@@ -37,7 +37,7 @@ DROP_DURATION = 30
 
 
 def choose_rarity() -> str:
-    """Choose a rarity using the configured drop probabilities."""
+    """Choose a rarity using the configured probabilities."""
 
     rarities = list(DROP_RATES.keys())
     weights = list(DROP_RATES.values())
@@ -139,6 +139,7 @@ class CardButton(discord.ui.Button):
         self.owner_id = owner_id
         self.card_view = view
         self.claim_count = 0
+        self.claimants: list[discord.Member | discord.User] = []
 
         rarity_emote = RARITY_EMOTES[
             card["stars"]
@@ -160,7 +161,7 @@ class CardButton(discord.ui.Button):
         self,
         interaction: discord.Interaction,
     ):
-        """Handle a card claim."""
+        """Record a claim without announcing it."""
 
         if self.card_view.expired:
             await interaction.response.send_message(
@@ -181,14 +182,17 @@ class CardButton(discord.ui.Button):
         )
 
         self.claim_count += 1
+        self.claimants.append(
+            interaction.user
+        )
 
         self.label = str(
             self.claim_count
         )
 
-        await interaction.response.send_message(
-            f"🎴 {interaction.user.mention} got "
-            f"**Card ID : `{self.card['id']}`**!"
+        # Private confirmation only.
+        await interaction.response.defer(
+            ephemeral=True
         )
 
         await self.card_view.update_buttons()
@@ -208,7 +212,9 @@ class CardDropView(discord.ui.View):
 
         self.cards = cards
         self.owner_id = owner_id
+
         self.claimed_users: set[int] = set()
+
         self.expired = False
         self.message: discord.Message | None = None
 
@@ -226,7 +232,7 @@ class CardDropView(discord.ui.View):
             )
 
     async def update_buttons(self):
-        """Update button labels after a claim."""
+        """Update claim counters."""
 
         if self.message is None:
             return
@@ -236,7 +242,7 @@ class CardDropView(discord.ui.View):
         )
 
     async def on_timeout(self):
-        """Disable all buttons when the drop expires."""
+        """Finish the drop after 30 seconds."""
 
         self.expired = True
 
@@ -251,6 +257,79 @@ class CardDropView(discord.ui.View):
             await self.message.edit(
                 view=self
             )
+
+            await self.send_results()
+
+    async def send_results(self):
+        """Send the private results summary."""
+
+        if self.message is None:
+            return
+
+        result_embed = discord.Embed(
+            title="✨ Congrats! The results are:",
+            color=discord.Color.from_rgb(
+                212,
+                175,
+                55,
+            ),
+        )
+
+        result_lines = []
+
+        for number, item in enumerate(
+            self.children,
+            start=1,
+        ):
+            if not isinstance(
+                item,
+                CardButton,
+            ):
+                continue
+
+            card = item.card
+
+            collection_name = get_collection_name(
+                card["collection_id"]
+            )
+
+            claimants = item.claimants
+
+            if claimants:
+                claimant_text = "\n".join(
+                    user.mention
+                    for user in claimants
+                )
+            else:
+                claimant_text = "No claims"
+
+            result_lines.append(
+                (
+                    f"**Card {number}**\n"
+                    f"Card ID: `{card['id']}`\n"
+                    f"CL: `{card['collection_id']}`\n"
+                    f"*{collection_name}*\n\n"
+                    f"{claimant_text}"
+                )
+            )
+
+        for index, result in enumerate(
+            result_lines,
+            start=1,
+        ):
+            result_embed.add_field(
+                name=f"Card {index}",
+                value=result,
+                inline=True,
+            )
+
+        result_embed.set_footer(
+            text="Claim results were revealed after the 30-second drop."
+        )
+
+        await self.message.reply(
+            embed=result_embed
+        )
 
 
 class Drop(commands.Cog):
@@ -365,4 +444,4 @@ async def setup(
 ):
     await bot.add_cog(
         Drop(bot)
-    )
+)
