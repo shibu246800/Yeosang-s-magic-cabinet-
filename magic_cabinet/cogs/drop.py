@@ -57,12 +57,12 @@ def choose_card() -> dict:
 def format_card(card: dict) -> str:
     """Format one card's information."""
 
-    collection_id = card["collection_id"]
     rarity_emote = RARITY_EMOTES[card["stars"]]
 
     return (
-        f"{rarity_emote} **Card ID : {card['id']}** "
-        f"**Collection: {collection_id}**"
+        f"{rarity_emote} "
+        f"-#**Card ID : `{card['id']}`** "
+        f"**Collection: `{card['collection_id']}`**"
     )
 
 
