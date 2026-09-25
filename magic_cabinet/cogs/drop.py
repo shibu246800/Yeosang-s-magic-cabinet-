@@ -95,20 +95,37 @@ def choose_drop_cards() -> list[dict]:
         cards.append(card)
 
         card_id = card["id"]
-        used_counts[card_id] = used_counts.get(card_id, 0) + 1
+        used_counts[card_id] = (
+            used_counts.get(card_id, 0) + 1
+        )
 
     return cards
+
+
+def get_collection_name(collection_id: str) -> str:
+    """Return the collection name."""
+
+    collection = COLLECTIONS.get(collection_id)
+
+    if collection is None:
+        return "Unknown Collection"
+
+    return collection["name"]
 
 
 def format_card(card: dict) -> str:
     """Format one card's information."""
 
     rarity_emote = RARITY_EMOTES[card["stars"]]
+    collection_name = get_collection_name(
+        card["collection_id"]
+    )
 
     return (
         f"{rarity_emote} ❖ "
         f"**Card ID : `{card['id']}`**  ·  "
-        f"**Collection : `{card['collection_id']}`**"
+        f"**Collection : `{card['collection_id']}`**\n"
+        f"　　*{collection_name}*"
     )
 
 
@@ -131,9 +148,13 @@ class CardButton(discord.ui.Button):
 
         super().__init__(
             label=f"{number}",
-            emoji=discord.PartialEmoji.from_str(rarity_emote),
+            emoji=discord.PartialEmoji.from_str(
+                rarity_emote
+            ),
             style=discord.ButtonStyle.secondary,
-            custom_id=f"cabinet_card_{card['id']}_{number}",
+            custom_id=(
+                f"cabinet_card_{card['id']}_{number}"
+            ),
         )
 
     async def callback(
@@ -156,13 +177,7 @@ class CardButton(discord.ui.Button):
             )
             return
 
-        # The drop owner has priority when they claim a card.
-        if interaction.user.id == self.owner_id:
-            winner = interaction.user
-
-        else:
-            # The first valid non-owner click wins.
-            winner = interaction.user
+        winner = interaction.user
 
         self.card_view.claimed[self.number] = winner
 
@@ -174,12 +189,14 @@ class CardButton(discord.ui.Button):
                     item.disabled = True
 
         await interaction.response.send_message(
-            f"🎴 {winner.mention} got **Card ID : `{self.card['id']}`**!",
+            f"🎴 {winner.mention} got "
+            f"**Card ID : `{self.card['id']}`**!"
         )
 
-        await self.card_view.message.edit(
-            view=self.card_view,
-        )
+        if self.card_view.message is not None:
+            await self.card_view.message.edit(
+                view=self.card_view
+            )
 
 
 class CardDropView(discord.ui.View):
@@ -194,15 +211,20 @@ class CardDropView(discord.ui.View):
 
         self.cards = cards
         self.owner_id = owner_id
+
         self.claimed = {
             1: None,
             2: None,
             3: None,
         }
+
         self.expired = False
         self.message: discord.Message | None = None
 
-        for number, card in enumerate(cards, start=1):
+        for number, card in enumerate(
+            cards,
+            start=1,
+        ):
             self.add_item(
                 CardButton(
                     card,
@@ -222,7 +244,9 @@ class CardDropView(discord.ui.View):
                 item.disabled = True
 
         if self.message is not None:
-            await self.message.edit(view=self)
+            await self.message.edit(
+                view=self
+            )
 
 
 class Drop(commands.Cog):
@@ -235,7 +259,10 @@ class Drop(commands.Cog):
         name="drop",
         description="Drop three cards from the Magic Cabinet.",
     )
-    async def drop(self, interaction: discord.Interaction):
+    async def drop(
+        self,
+        interaction: discord.Interaction,
+    ):
         """Handle the /drop command."""
 
         cabinet = self.bot.get_cog("cabinet")
@@ -259,12 +286,13 @@ class Drop(commands.Cog):
 
         if not allowed:
             await interaction.response.send_message(
-                "This command can only be used in a configured Drop channel."
+                "This command can only be used in "
+                "a configured Drop channel."
             )
             return
 
-        # Acknowledge immediately so Discord does not expire
-        # the slash-command interaction while the card image is created.
+        # Acknowledge immediately so Discord does not
+        # expire the interaction while images are created.
         await interaction.response.defer()
 
         cards = choose_drop_cards()
@@ -290,7 +318,11 @@ class Drop(commands.Cog):
                 "╰─ ⋆⋅☆⋅⋆ ─╯\n\n"
                 f"{card_information}"
             ),
-            color=discord.Color.from_rgb(212, 175, 55),
+            color=discord.Color.from_rgb(
+                212,
+                175,
+                55,
+            ),
         )
 
         embed.set_image(
@@ -304,8 +336,8 @@ class Drop(commands.Cog):
 
         message = await interaction.followup.send(
             content=(
-                f"**Oh {interaction.user.mention} is dropping! "
-                f"Attention!**"
+                f"**Oh {interaction.user.mention} is "
+                f"dropping! Attention!**"
             ),
             embed=embed,
             file=file,
