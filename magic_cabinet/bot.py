@@ -15,7 +15,6 @@ if not TOKEN:
     raise RuntimeError("DISCORD_TOKEN is missing.")
 
 
-# Health server for Render
 app = Flask(__name__)
 
 
@@ -31,25 +30,25 @@ def run_health_server():
 
 threading.Thread(
     target=run_health_server,
-    daemon=True
+    daemon=True,
 ).start()
 
 
-# Discord bot
 intents = discord.Intents.default()
 
 bot = commands.Bot(
     command_prefix="!",
-    intents=intents
+    intents=intents,
 )
 
 
-# Load extensions and sync slash commands
 async def setup_hook():
     await bot.load_extension("magic_cabinet.cogs.cabinet")
     await bot.load_extension("magic_cabinet.cogs.drop")
     await bot.load_extension("magic_cabinet.cogs.magic")
+
     await bot.tree.sync()
+
 
 bot.setup_hook = setup_hook
 
