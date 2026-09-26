@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timezone
 
 import discord
 from discord import app_commands
@@ -22,6 +23,16 @@ def initialize_database():
             )
             """
         )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS players (
+                user_id INTEGER PRIMARY KEY,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+
         connection.commit()
 
 
