@@ -1,5 +1,4 @@
 import sqlite3
-from datetime import datetime, timezone
 
 import discord
 from discord import app_commands
@@ -28,10 +27,24 @@ def initialize_database():
             """
             CREATE TABLE IF NOT EXISTS players (
                 user_id INTEGER PRIMARY KEY,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                vault TEXT
             )
             """
         )
+
+        # Add vault column if an older players table already exists.
+        columns = [
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(players)"
+            ).fetchall()
+        ]
+
+        if "vault" not in columns:
+            connection.execute(
+                "ALTER TABLE players ADD COLUMN vault TEXT"
+            )
 
         connection.commit()
 
