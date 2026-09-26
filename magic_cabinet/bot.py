@@ -48,8 +48,8 @@ bot = commands.Bot(
 async def setup_hook():
     await bot.load_extension("magic_cabinet.cogs.cabinet")
     await bot.load_extension("magic_cabinet.cogs.drop")
+    await bot.load_extension("magic_cabinet.cogs.magic")
     await bot.tree.sync()
-
 
 bot.setup_hook = setup_hook
 
