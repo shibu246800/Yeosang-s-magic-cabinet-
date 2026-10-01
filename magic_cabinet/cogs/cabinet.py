@@ -33,7 +33,6 @@ def initialize_database():
             """
         )
 
-        # Add vault column if an older players table already exists.
         columns = [
             row[1]
             for row in connection.execute(
@@ -143,11 +142,20 @@ class Cabinet(commands.GroupCog, name="cabinet"):
             for channel in unique_channels
         )
 
+        embed = discord.Embed(
+            description=(
+                "🗝️ **Drop channels saved!**\n\n"
+                "➷ `/drop` can now be used only in:\n"
+                f"{channel_list}\n\n"
+                "-# ❃ Other Magic Cabinet commands are not restricted "
+                "by this setup.✒\n"
+                "✦ Players can now begin with `/magic awaken`"
+            ),
+            color=discord.Color.from_str("#4E0017"),
+        )
+
         await interaction.response.send_message(
-            "🗝️ **Drop channels saved!**\n\n"
-            "`/drop` can now be used only in:\n"
-            f"{channel_list}\n\n"
-            "Other Magic Cabinet commands are not restricted by this setup."
+            embed=embed
         )
 
     def is_drop_channel(
