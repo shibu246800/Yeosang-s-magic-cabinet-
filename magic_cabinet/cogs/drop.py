@@ -195,6 +195,23 @@ def get_card_image(
     )
 
 
+def get_card_vault(
+    card: dict,
+) -> str:
+    """Return the Vault that owns a card."""
+
+    collection_id = card["collection_id"]
+
+    collection = get_collection(
+        collection_id
+    )
+
+    return collection.get(
+        "vault",
+        collection_id.split("_")[0],
+    )
+
+
 def format_card(
     card: dict,
 ) -> str:
@@ -212,11 +229,8 @@ def format_card(
         card
     )
 
-    vault = get_collection(
-        card["collection_id"]
-    ).get(
-        "vault",
-        card["collection_id"].split("_")[0],
+    vault = get_card_vault(
+        card
     )
 
     return (
@@ -227,23 +241,26 @@ def format_card(
     )
 
 
-def get_player_vault(
+def get_player_vaults(
     user_id: int,
-) -> bool:
-    """Return whether the player has selected at least one Vault."""
+) -> list[str]:
+    """Return all Vaults selected by a player."""
 
     with sqlite3.connect(DATABASE) as connection:
-        row = connection.execute(
+        rows = connection.execute(
             """
-            SELECT 1
+            SELECT vault
             FROM player_vaults
             WHERE user_id = ?
-            LIMIT 1
             """,
             (user_id,),
-        ).fetchone()
+        ).fetchall()
 
-    return row is not None
+    return [
+        row[0]
+        for row in rows
+        if row[0] in {"BB", "GG", "BG"}
+    ]
 
 
 def get_bag_quantity(
@@ -388,6 +405,53 @@ class CardButton(discord.ui.Button):
                 embed = discord.Embed(
                     description=(
                         "✦ This drop has already ended."
+                    ),
+                    color=CABINET_COLOR,
+                )
+
+                await interaction.response.send_message(
+                    embed=embed,
+                    ephemeral=True,
+                )
+                return
+
+            selected_vaults = get_player_vaults(
+                user_id
+            )
+
+            if not selected_vaults:
+                embed = discord.Embed(
+                    description=(
+                        "🔒 Your Cabinet Vaults are not "
+                        "set yet.\n\n"
+                        "Use `/magic awaken` to choose "
+                        "your Vaults first."
+                    ),
+                    color=CABINET_COLOR,
+                )
+
+                await interaction.response.send_message(
+                    embed=embed,
+                    ephemeral=True,
+                )
+                return
+
+            card_vault = get_card_vault(
+                self.card
+            )
+
+            if card_vault not in selected_vaults:
+                embed = discord.Embed(
+                    description=(
+                        f"🔒 This card belongs to the "
+                        f"**{card_vault} Vault**.\n\n"
+                        "You haven't selected this Vault, "
+                        "so you cannot claim this card.\n\n"
+                        "Your selected Vaults:\n"
+                        + "\n".join(
+                            f"➤ **{vault}**"
+                            for vault in selected_vaults
+                        )
                     ),
                     color=CABINET_COLOR,
                 )
@@ -808,8 +872,10 @@ class Drop(commands.Cog):
             )
             return
 
-        has_vault = get_player_vault(
-            interaction.user.id
+        has_vault = bool(
+            get_player_vaults(
+                interaction.user.id
+            )
         )
 
         if not has_vault:
@@ -890,4 +956,4 @@ async def setup(
 ):
     await bot.add_cog(
         Drop(bot)
-            )
+        )
