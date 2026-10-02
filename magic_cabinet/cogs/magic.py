@@ -156,6 +156,7 @@ def save_vaults(
             """,
             [
                 (
+                    user_id,
                     vault,
                 )
                 for vault in ordered_vaults
@@ -646,4 +647,4 @@ async def setup(
 
     await bot.add_cog(
         Vault(bot)
-            )
+)
