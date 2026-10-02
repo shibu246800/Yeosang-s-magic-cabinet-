@@ -221,23 +221,13 @@ def format_card(
         card["stars"]
     ]
 
-    collection_name = get_collection_name(
-        card["collection_id"]
-    )
-
     card_name = get_card_name(
-        card
-    )
-
-    vault = get_card_vault(
         card
     )
 
     return (
         f"{rarity_emote} ❖ "
-        f"**{card_name}** ☆ "
-        f"{vault} · "
-        f"*{collection_name}*"
+        f"**{card_name}**"
     )
 
 
@@ -370,9 +360,7 @@ class CardButton(discord.ui.Button):
         self.owner_id = owner_id
         self.card_view = view
 
-        self.claimants: list[
-            discord.Member | discord.User
-        ] = []
+        self.claimant: discord.Member | discord.User | None = None
 
         rarity_emote = RARITY_EMOTES[
             card["stars"]
@@ -466,9 +454,15 @@ class CardButton(discord.ui.Button):
                 user_id == view.owner_id
             )
 
+            previous_choice = (
+                view.player_choices.get(
+                    user_id
+                )
+            )
+
             if not is_owner:
 
-                if user_id in view.player_choices:
+                if previous_choice is not None:
                     embed = discord.Embed(
                         description=(
                             "✦ You have already claimed "
@@ -485,19 +479,28 @@ class CardButton(discord.ui.Button):
                     )
                     return
 
-                view.player_choices[user_id] = self.number
+                if self.claimant is not None:
+                    embed = discord.Embed(
+                        description=(
+                            "✦ This card has already "
+                            "been claimed."
+                        ),
+                        color=CABINET_COLOR,
+                    )
 
-                self.claimants.append(
-                    interaction.user
+                    await interaction.response.send_message(
+                        embed=embed,
+                        ephemeral=True,
+                    )
+                    return
+
+                self.claimant = interaction.user
+
+                view.player_choices[user_id] = (
+                    self.number
                 )
 
             else:
-
-                previous_choice = (
-                    view.player_choices.get(
-                        user_id
-                    )
-                )
 
                 if previous_choice == self.number:
                     embed = discord.Embed(
@@ -522,32 +525,40 @@ class CardButton(discord.ui.Button):
                     )
 
                     if previous_button is not None:
-                        previous_button.claimants = [
-                            claimant
-                            for claimant
-                            in previous_button.claimants
-                            if claimant.id != user_id
-                        ]
+                        previous_claimant = (
+                            previous_button.claimant
+                        )
 
-                        previous_button.label = str(
-                            len(
-                                previous_button.claimants
+                        if (
+                            previous_claimant is not None
+                            and previous_claimant.id
+                            == user_id
+                        ):
+                            previous_button.claimant = None
+                            previous_button.label = "0"
+
+                if self.claimant is not None:
+                    previous_claimant = self.claimant
+
+                    if previous_claimant.id != user_id:
+                        old_choice = (
+                            view.player_choices.get(
+                                previous_claimant.id
                             )
                         )
+
+                        if old_choice == self.number:
+                            del view.player_choices[
+                                previous_claimant.id
+                            ]
+
+                self.claimant = interaction.user
 
                 view.player_choices[user_id] = (
                     self.number
                 )
 
-                self.claimants.append(
-                    interaction.user
-                )
-
-            self.label = str(
-                len(
-                    self.claimants
-                )
-            )
+            self.label = "1" if self.claimant else "0"
 
         await interaction.response.defer(
             ephemeral=True
@@ -664,6 +675,7 @@ class CardDropView(discord.ui.View):
                 continue
 
             card = item.card
+            card_number = item.number
 
             card_name = get_card_name(
                 card
@@ -673,64 +685,50 @@ class CardDropView(discord.ui.View):
                 card
             )
 
-            collection_id = card[
-                "collection_id"
-            ]
-
-            collection_name = (
-                get_collection_name(
-                    collection_id
-                )
-            )
-
-            series_name = get_series(
-                collection_id
-            )
-
-            if not item.claimants:
-                continue
-
-            for claimant in item.claimants:
-
-                quantity, was_new = add_to_bag(
-                    claimant.id,
-                    card["id"],
-                )
-
-                if was_new:
-                    status = (
-                        "You got a new card!"
-                    )
-                else:
-                    status = (
-                        f"You now have **{quantity}** copies!\n"
-                        "You got a dupie! You can either: "
-                        "`/sell` or `/merge`"
-                    )
-
-                image_line = ""
-
-                if image_url:
-                    image_line = (
-                        f"\n[Card Image]({image_url})"
-                    )
-
+            if item.claimant is None:
                 result_lines.append(
                     (
-                        f"**{card_name}**"
-                        f"{image_line}\n"
-                        f"{claimant.mention}\n"
-                        f"-# ☆ Card ID: `{card['id']}` "
-                        f"☆ Collection ID: `{collection_id}` "
-                        f"({collection_name}) "
-                        f"☆ Series: {series_name}\n\n"
-                        f"{status}"
+                        f"**Card {card_number}**\n"
+                        "No selections"
                     )
                 )
+                continue
 
-        if not result_lines:
+            claimant = item.claimant
+
+            quantity, was_new = add_to_bag(
+                claimant.id,
+                card["id"],
+            )
+
+            if was_new:
+                status = (
+                    "You got a new card!"
+                )
+            else:
+                status = (
+                    f"You now have **{quantity}** copies!\n"
+                    "You got a dupie! You can either: "
+                    "`/sell` or `/merge`"
+                )
+
+            if image_url:
+                name_line = (
+                    f"**Card {card_number}**\n"
+                    f"[{card_name}]({image_url})"
+                )
+            else:
+                name_line = (
+                    f"**Card {card_number}**\n"
+                    f"**{card_name}**"
+                )
+
             result_lines.append(
-                "No cards were claimed during this drop."
+                (
+                    f"{name_line}\n"
+                    f"{claimant.mention}\n\n"
+                    f"{status}"
+                )
             )
 
         result_text = (
