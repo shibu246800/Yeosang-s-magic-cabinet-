@@ -156,15 +156,12 @@ def save_vaults(
             """,
             [
                 (
-                    user_id,
                     vault,
                 )
                 for vault in ordered_vaults
             ],
         )
 
-        # Keep the original players.vault column compatible
-        # with existing Cabinet code.
         connection.execute(
             """
             UPDATE players
@@ -556,6 +553,18 @@ class Magic(commands.GroupCog, name="magic"):
             ),
         )
 
+
+class Vault(commands.GroupCog, name="vault"):
+    """Magic Cabinet Vault settings."""
+
+    def __init__(
+        self,
+        bot: commands.Bot,
+    ):
+        self.bot = bot
+
+        initialize_magic_database()
+
     @app_commands.command(
         name="settings",
         description="Change your Magic Cabinet Vaults.",
@@ -633,4 +642,8 @@ async def setup(
 ):
     await bot.add_cog(
         Magic(bot)
-)
+    )
+
+    await bot.add_cog(
+        Vault(bot)
+            )
