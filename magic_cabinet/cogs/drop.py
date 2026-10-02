@@ -229,25 +229,21 @@ def format_card(
 
 def get_player_vault(
     user_id: int,
-) -> str | None:
-    """Return a player's selected Vault."""
-
-    initialize_bag_database()
+) -> bool:
+    """Return whether the player has selected at least one Vault."""
 
     with sqlite3.connect(DATABASE) as connection:
         row = connection.execute(
             """
-            SELECT vault
-            FROM players
+            SELECT 1
+            FROM player_vaults
             WHERE user_id = ?
+            LIMIT 1
             """,
             (user_id,),
         ).fetchone()
 
-    if row is None:
-        return None
-
-    return row[0]
+    return row is not None
 
 
 def get_bag_quantity(
@@ -812,11 +808,11 @@ class Drop(commands.Cog):
             )
             return
 
-        player_vault = get_player_vault(
+        has_vault = get_player_vault(
             interaction.user.id
         )
 
-        if player_vault is None:
+        if not has_vault:
             embed = discord.Embed(
                 description=(
                     "🔒 This vault remains sealed.\n"
@@ -894,4 +890,4 @@ async def setup(
 ):
     await bot.add_cog(
         Drop(bot)
-)
+            )
