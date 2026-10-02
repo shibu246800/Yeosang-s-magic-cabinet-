@@ -18,11 +18,16 @@ VAULT_NAMES = {
     "BG": "Boy × Girl",
 }
 
+VAULT_ORDER = ["BB", "GG", "BG"]
+
+GLIMMER_EMOTE = "<:glimmer:1554842064464773172>"
+
 
 def initialize_magic_database():
-    """Create the player, vault, and balance tables."""
+    """Create the Magic Cabinet player tables."""
 
     with sqlite3.connect(DATABASE) as connection:
+
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS players (
@@ -55,26 +60,68 @@ def initialize_magic_database():
         connection.commit()
 
 
-def get_selected_vaults(user_id: int) -> list[str]:
+def ensure_player(
+    user_id: int,
+):
+    """Create the player record if it does not exist."""
+
+    with sqlite3.connect(DATABASE) as connection:
+
+        existing_player = connection.execute(
+            """
+            SELECT user_id
+            FROM players
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+
+        if existing_player is None:
+            connection.execute(
+                """
+                INSERT INTO players (
+                    user_id,
+                    created_at,
+                    vault
+                )
+                VALUES (?, ?, NULL)
+                """,
+                (
+                    user_id,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+
+        connection.commit()
+
+
+def get_selected_vaults(
+    user_id: int,
+) -> list[str]:
     """Return all Vaults selected by a player."""
 
     with sqlite3.connect(DATABASE) as connection:
+
         rows = connection.execute(
             """
             SELECT vault
             FROM player_vaults
             WHERE user_id = ?
-            ORDER BY
-                CASE vault
-                    WHEN 'BB' THEN 1
-                    WHEN 'GG' THEN 2
-                    WHEN 'BG' THEN 3
-                END
             """,
             (user_id,),
         ).fetchall()
 
-    return [row[0] for row in rows]
+    selected = {
+        row[0]
+        for row in rows
+        if row[0] in VAULT_ORDER
+    }
+
+    return [
+        vault
+        for vault in VAULT_ORDER
+        if vault in selected
+    ]
 
 
 def save_vaults(
@@ -82,6 +129,12 @@ def save_vaults(
     vaults: list[str],
 ):
     """Replace the player's selected Vaults."""
+
+    ordered_vaults = [
+        vault
+        for vault in VAULT_ORDER
+        if vault in vaults
+    ]
 
     with sqlite3.connect(DATABASE) as connection:
 
@@ -106,13 +159,12 @@ def save_vaults(
                     user_id,
                     vault,
                 )
-                for vault in vaults
+                for vault in ordered_vaults
             ],
         )
 
-        # Keep the old players.vault field synchronized with
-        # the first selected Vault for compatibility with
-        # existing parts of the Cabinet.
+        # Keep the original players.vault column compatible
+        # with existing Cabinet code.
         connection.execute(
             """
             UPDATE players
@@ -120,7 +172,7 @@ def save_vaults(
             WHERE user_id = ?
             """,
             (
-                vaults[0],
+                ordered_vaults[0],
                 user_id,
             ),
         )
@@ -128,10 +180,13 @@ def save_vaults(
         connection.commit()
 
 
-def give_starting_glimmers(user_id: int):
-    """Give the player their starting 10,000 glimmers."""
+def give_starting_glimmers(
+    user_id: int,
+):
+    """Give 10,000 starting glimmers only once."""
 
     with sqlite3.connect(DATABASE) as connection:
+
         existing_balance = connection.execute(
             """
             SELECT glimmers
@@ -142,6 +197,7 @@ def give_starting_glimmers(user_id: int):
         ).fetchone()
 
         if existing_balance is None:
+
             connection.execute(
                 """
                 INSERT INTO balances (
@@ -159,7 +215,9 @@ def give_starting_glimmers(user_id: int):
         connection.commit()
 
 
-def format_vaults(vaults: list[str]) -> str:
+def format_selected_vaults(
+    vaults: list[str],
+) -> str:
     """Format selected Vaults for display."""
 
     return "\n".join(
@@ -169,16 +227,21 @@ def format_vaults(vaults: list[str]) -> str:
 
 
 class VaultSelectionView(discord.ui.View):
-    """Multi-select Vault selection view."""
+    """Multi-select Vault buttons."""
 
     def __init__(
         self,
         user_id: int,
         selected_vaults: list[str] | None = None,
+        is_settings: bool = False,
     ):
-        super().__init__(timeout=300)
+        super().__init__(
+            timeout=300
+        )
 
         self.user_id = user_id
+        self.is_settings = is_settings
+
         self.selected_vaults = set(
             selected_vaults or []
         )
@@ -186,9 +249,10 @@ class VaultSelectionView(discord.ui.View):
         self.update_button_states()
 
     def update_button_states(self):
-        """Update button appearance from current selections."""
+        """Show which Vaults are currently selected."""
 
         for item in self.children:
+
             if not isinstance(
                 item,
                 discord.ui.Button,
@@ -197,10 +261,13 @@ class VaultSelectionView(discord.ui.View):
 
             if item.custom_id == "magic_vault_bb":
                 vault = "BB"
+
             elif item.custom_id == "magic_vault_gg":
                 vault = "GG"
+
             elif item.custom_id == "magic_vault_bg":
                 vault = "BG"
+
             else:
                 continue
 
@@ -214,22 +281,26 @@ class VaultSelectionView(discord.ui.View):
         interaction: discord.Interaction,
         vault: str,
     ):
-        """Toggle one Vault selection."""
+        """Toggle a Vault selection."""
 
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    description=(
-                        "These Vaults belong to another player."
-                    ),
-                    color=EMBED_COLOR,
+
+            embed = discord.Embed(
+                description=(
+                    "These Vaults belong to another player."
                 ),
+                color=EMBED_COLOR,
+            )
+
+            await interaction.response.send_message(
+                embed=embed,
                 ephemeral=True,
             )
             return
 
         if vault in self.selected_vaults:
             self.selected_vaults.remove(vault)
+
         else:
             self.selected_vaults.add(vault)
 
@@ -240,7 +311,8 @@ class VaultSelectionView(discord.ui.View):
         )
 
     @discord.ui.button(
-        label="🗝️ BB",
+        label="BB",
+        emoji="🗝️",
         style=discord.ButtonStyle.secondary,
         custom_id="magic_vault_bb",
         row=0,
@@ -256,7 +328,8 @@ class VaultSelectionView(discord.ui.View):
         )
 
     @discord.ui.button(
-        label="🗝️ GG",
+        label="GG",
+        emoji="🗝️",
         style=discord.ButtonStyle.secondary,
         custom_id="magic_vault_gg",
         row=0,
@@ -272,7 +345,8 @@ class VaultSelectionView(discord.ui.View):
         )
 
     @discord.ui.button(
-        label="🗝️ BG",
+        label="BG",
+        emoji="🗝️",
         style=discord.ButtonStyle.secondary,
         custom_id="magic_vault_bg",
         row=0,
@@ -299,36 +373,42 @@ class VaultSelectionView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
+        """Save the selected Vaults."""
+
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    description=(
-                        "These Vaults belong to another player."
-                    ),
-                    color=EMBED_COLOR,
+
+            embed = discord.Embed(
+                description=(
+                    "These Vaults belong to another player."
                 ),
+                color=EMBED_COLOR,
+            )
+
+            await interaction.response.send_message(
+                embed=embed,
                 ephemeral=True,
             )
             return
 
         if not self.selected_vaults:
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    description=(
-                        "✦ Choose at least one Vault before "
-                        "sealing your choices."
-                    ),
-                    color=EMBED_COLOR,
+
+            embed = discord.Embed(
+                description=(
+                    "✦ Choose at least one Vault before "
+                    "sealing your choices."
                 ),
+                color=EMBED_COLOR,
+            )
+
+            await interaction.response.send_message(
+                embed=embed,
                 ephemeral=True,
             )
             return
 
-        vault_order = ["BB", "GG", "BG"]
-
         selected = [
             vault
-            for vault in vault_order
+            for vault in VAULT_ORDER
             if vault in self.selected_vaults
         ]
 
@@ -337,70 +417,59 @@ class VaultSelectionView(discord.ui.View):
             selected,
         )
 
-        give_starting_glimmers(
-            self.user_id
-        )
+        if not self.is_settings:
 
-        selected_text = "\n".join(
-            f"➤ **{vault}** · {VAULT_NAMES[vault]}"
-            for vault in selected
-        )
+            give_starting_glimmers(
+                self.user_id
+            )
 
-        embed = discord.Embed(
-            description=(
-                "╭────────────── ⟡ ──────────────╮\n"
-                "                     **VAULTS SEALED!**\n"
-                "╰────────────── ⟡ ──────────────╯\n\n"
-                "Your choices have been saved.\n"
-                "✦ **Selected Vaults**\n"
-                f"{selected_text}\n\n"
-                "The vaults are now yours to explore! "
-                "You have received your starting coins:\n"
-                "◈ <:glimmer:1554842064464773172> "
-                "**10,000 glimmers**\n\n"
-                "Cards are waiting beyond the Cabinet doors. "
-                "Your next step: ➤ `/drop`\n\n"
-                "You can always change your preferences\n"
-                "using `/vault settings`."
-            ),
-            color=EMBED_COLOR,
-        )
+            selected_text = format_selected_vaults(
+                selected
+            )
+
+            embed = discord.Embed(
+                description=(
+                    "╭────────────── ⟡ ──────────────╮\n"
+                    "                          **VAULTS SEALED!**\n"
+                    "╰────────────── ⟡ ──────────────╯\n\n"
+                    "Your choices have been saved.\n"
+                    "✦ **Selected Vaults**\n"
+                    f"{selected_text}\n\n"
+                    "The vaults are now yours to explore! "
+                    "You have received your starting coins:\n"
+                    f"◈ {GLIMMER_EMOTE} **10,000 glimmers**\n\n"
+                    "Cards are waiting beyond the Cabinet doors. "
+                    "Your next step: ➤ `/drop`\n\n"
+                    "You can always change your preferences\n"
+                    "using `/vault settings`."
+                ),
+                color=EMBED_COLOR,
+            )
+
+        else:
+
+            selected_text = format_selected_vaults(
+                selected
+            )
+
+            embed = discord.Embed(
+                description=(
+                    "╭────────────── ⟡ ──────────────╮\n"
+                    "                    **VAULTS UPDATED!**\n"
+                    "╰────────────── ⟡ ──────────────╯\n\n"
+                    "Your Vault preferences have been saved.\n"
+                    "✦ **Selected Vaults**\n"
+                    f"{selected_text}\n\n"
+                    "Your Cabinet will use these Vaults "
+                    "for your future collection journey."
+                ),
+                color=EMBED_COLOR,
+            )
 
         await interaction.response.edit_message(
             embed=embed,
             view=None,
         )
-
-
-class VaultSettingsView(VaultSelectionView):
-    """Multi-select Vault settings view."""
-
-    def __init__(
-        self,
-        user_id: int,
-        selected_vaults: list[str],
-    ):
-        super().__init__(
-            user_id,
-            selected_vaults,
-        )
-
-        # Use a different custom ID for the settings save button
-        # so Discord treats this as a separate interaction view.
-        for item in self.children:
-            if isinstance(
-                item,
-                discord.ui.Button,
-            ):
-                if item.custom_id == "magic_vault_save":
-                    item.custom_id = "vault_settings_save"
-
-    async def save_button(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ):
-        pass
 
 
 class Magic(commands.GroupCog, name="magic"):
@@ -411,6 +480,7 @@ class Magic(commands.GroupCog, name="magic"):
         bot: commands.Bot,
     ):
         self.bot = bot
+
         initialize_magic_database()
 
     @app_commands.command(
@@ -423,48 +493,26 @@ class Magic(commands.GroupCog, name="magic"):
     ):
         user_id = interaction.user.id
 
-        with sqlite3.connect(DATABASE) as connection:
-            existing_player = connection.execute(
-                """
-                SELECT user_id
-                FROM players
-                WHERE user_id = ?
-                """,
-                (user_id,),
-            ).fetchone()
-
-            if existing_player is None:
-                connection.execute(
-                    """
-                    INSERT INTO players (
-                        user_id,
-                        created_at,
-                        vault
-                    )
-                    VALUES (?, ?, NULL)
-                    """,
-                    (
-                        user_id,
-                        datetime.now(timezone.utc).isoformat(),
-                    ),
-                )
-                connection.commit()
-
-        selected_vaults = get_selected_vaults(
+        ensure_player(
             user_id
         )
 
-        if selected_vaults:
+        existing_vaults = get_selected_vaults(
+            user_id
+        )
+
+        if existing_vaults:
+
             embed = discord.Embed(
                 description=(
                     "╭────────────── ✦ ──────────────╮\n"
                     "                     **CABINET AWAKENED**\n"
                     "╰────────────── ✦ ──────────────╯\n\n"
-                    "-# The Cabinet already recognizes you.\n"
-                    f"-# Your selected Vaults: "
-                    f"{', '.join(selected_vaults)}\n\n"
-                    "You can change your preferences using "
-                    "`/vault settings`."
+                    "-# The Cabinet already recognizes you.\n\n"
+                    "✦ **Selected Vaults**\n"
+                    f"{format_selected_vaults(existing_vaults)}\n\n"
+                    "You can always change your preferences\n"
+                    "using `/vault settings`."
                 ),
                 color=EMBED_COLOR,
             )
@@ -489,9 +537,9 @@ class Magic(commands.GroupCog, name="magic"):
                 "-# ✦ You may choose one, two, or all three.\n"
                 "-# Your choices will shape which collections "
                 "you encounter within the Cabinet.\n\n"
-                "**BB** A vault of boy × boy collections.\n"
-                "**GG** A vault of girl × girl collections.\n"
-                "**BG** A vault of boy × girl collections.\n\n"
+                " **BB** A vault of boy × boy collections.\n"
+                " **GG** A vault of girl × girl collections.\n"
+                " **BG** A vault of boy × girl collections.\n\n"
                 "✦ Choose your vaults below.\n"
                 "✦ Your selection can be changed later by "
                 "`/vault settings`\n"
@@ -501,7 +549,11 @@ class Magic(commands.GroupCog, name="magic"):
 
         await interaction.response.send_message(
             embed=embed,
-            view=VaultSelectionView(user_id),
+            view=VaultSelectionView(
+                user_id=user_id,
+                selected_vaults=[],
+                is_settings=False,
+            ),
         )
 
     @app_commands.command(
@@ -515,6 +567,7 @@ class Magic(commands.GroupCog, name="magic"):
         user_id = interaction.user.id
 
         with sqlite3.connect(DATABASE) as connection:
+
             player = connection.execute(
                 """
                 SELECT user_id
@@ -525,6 +578,7 @@ class Magic(commands.GroupCog, name="magic"):
             ).fetchone()
 
         if player is None:
+
             embed = discord.Embed(
                 description=(
                     "🔒 Your Cabinet is not awake yet.\n\n"
@@ -550,7 +604,9 @@ class Magic(commands.GroupCog, name="magic"):
                 "╰────────────── ✦ ──────────────╯\n\n"
                 "Your current Vaults:\n"
                 + (
-                    format_vaults(current_vaults)
+                    format_selected_vaults(
+                        current_vaults
+                    )
                     if current_vaults
                     else "➤ None"
                 )
@@ -564,8 +620,9 @@ class Magic(commands.GroupCog, name="magic"):
         await interaction.response.send_message(
             embed=embed,
             view=VaultSelectionView(
-                user_id,
-                current_vaults,
+                user_id=user_id,
+                selected_vaults=current_vaults,
+                is_settings=True,
             ),
             ephemeral=True,
         )
@@ -576,4 +633,4 @@ async def setup(
 ):
     await bot.add_cog(
         Magic(bot)
-            )
+)
