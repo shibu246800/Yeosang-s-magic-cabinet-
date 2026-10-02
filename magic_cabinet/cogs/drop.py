@@ -20,9 +20,11 @@ from magic_cabinet.data.rare import CARDS as RARE_CARDS
 DATABASE = "cabinet.db"
 
 DROP_CARD_COUNT = 3
-DROP_DURATION = 30
+DROP_DURATION = 20
 
 OWNER_EMOTE = "<:owner_bag:1552939106731032646>"
+
+CABINET_COLOR = discord.Color.from_str("#4E0017")
 
 
 RARITY_CARDS = {
@@ -196,7 +198,7 @@ def get_card_image(
 def format_card(
     card: dict,
 ) -> str:
-    """Format one card for the drop."""
+    """Format one card for the active drop."""
 
     rarity_emote = RARITY_EMOTES[
         card["stars"]
@@ -210,10 +212,17 @@ def format_card(
         card
     )
 
+    vault = get_collection(
+        card["collection_id"]
+    ).get(
+        "vault",
+        card["collection_id"].split("_")[0],
+    )
+
     return (
         f"{rarity_emote} ❖ "
         f"**{card_name}** ☆ "
-        f"`{card['collection_id']}` · "
+        f"{vault} · "
         f"*{collection_name}*"
     )
 
@@ -380,8 +389,15 @@ class CardButton(discord.ui.Button):
         async with view.claim_lock:
 
             if view.expired:
+                embed = discord.Embed(
+                    description=(
+                        "✦ This drop has already ended."
+                    ),
+                    color=CABINET_COLOR,
+                )
+
                 await interaction.response.send_message(
-                    "This drop has already ended.",
+                    embed=embed,
                     ephemeral=True,
                 )
                 return
@@ -390,17 +406,21 @@ class CardButton(discord.ui.Button):
                 user_id == view.owner_id
             )
 
-            # Normal players can only choose once.
             if not is_owner:
 
                 if user_id in view.player_choices:
-                    await interaction.response.send_message(
-                        (
+                    embed = discord.Embed(
+                        description=(
                             "✦ You have already claimed "
-                            "a card from this drop.\n"
+                            "a card from this drop.\n\n"
                             "Only one card may be claimed "
                             "per player in each drop."
                         ),
+                        color=CABINET_COLOR,
+                    )
+
+                    await interaction.response.send_message(
+                        embed=embed,
                         ephemeral=True,
                     )
                     return
@@ -411,7 +431,6 @@ class CardButton(discord.ui.Button):
                     interaction.user
                 )
 
-            # The owner can change their choice.
             else:
 
                 previous_choice = (
@@ -421,11 +440,16 @@ class CardButton(discord.ui.Button):
                 )
 
                 if previous_choice == self.number:
-                    await interaction.response.send_message(
-                        (
+                    embed = discord.Embed(
+                        description=(
                             f"{OWNER_EMOTE} You are already "
                             "claiming this card."
                         ),
+                        color=CABINET_COLOR,
+                    )
+
+                    await interaction.response.send_message(
+                        embed=embed,
                         ephemeral=True,
                     )
                     return
@@ -541,7 +565,7 @@ class CardDropView(discord.ui.View):
             pass
 
     async def on_timeout(self):
-        """Finish the drop after 30 seconds."""
+        """Finish the drop after 20 seconds."""
 
         async with self.claim_lock:
             self.expired = True
@@ -604,18 +628,6 @@ class CardDropView(discord.ui.View):
             )
 
             if not item.claimants:
-                result_lines.append(
-                    (
-                        f"**{card_name}**\n"
-                        f"{image_url}\n"
-                        "No one claimed this card.\n"
-                        f"-# ☆ Card ID: `{card['id']}` "
-                        f"☆ Collection ID: `{collection_id}` "
-                        f"({collection_name}) "
-                        f"☆ Series: {series_name}"
-                    )
-                )
-
                 continue
 
             for claimant in item.claimants:
@@ -631,15 +643,22 @@ class CardDropView(discord.ui.View):
                     )
                 else:
                     status = (
-                        f"You now have **{quantity}** copies!\n\n"
+                        f"You now have **{quantity}** copies!\n"
                         "You got a dupie! You can either: "
                         "`/sell` or `/merge`"
                     )
 
+                image_line = ""
+
+                if image_url:
+                    image_line = (
+                        f"\n[Card Image]({image_url})"
+                    )
+
                 result_lines.append(
                     (
-                        f"**{card_name}**\n"
-                        f"{image_url}\n"
+                        f"**{card_name}**"
+                        f"{image_line}\n"
                         f"{claimant.mention}\n"
                         f"-# ☆ Card ID: `{card['id']}` "
                         f"☆ Collection ID: `{collection_id}` "
@@ -648,6 +667,11 @@ class CardDropView(discord.ui.View):
                         f"{status}"
                     )
                 )
+
+        if not result_lines:
+            result_lines.append(
+                "No cards were claimed during this drop."
+            )
 
         result_text = (
             "╭────────────── ✦ ──────────────╮\n"
@@ -661,8 +685,13 @@ class CardDropView(discord.ui.View):
             "╰─────── ⋆⋅☆⋅⋆ ───────╯"
         )
 
+        result_embed = discord.Embed(
+            description=result_text,
+            color=CABINET_COLOR,
+        )
+
         await self.message.reply(
-            content=result_text
+            embed=result_embed
         )
 
 
@@ -695,14 +724,30 @@ class Drop(commands.Cog):
         )
 
         if cabinet is None:
+            embed = discord.Embed(
+                description=(
+                    "The Magic Cabinet setup is "
+                    "currently unavailable."
+                ),
+                color=CABINET_COLOR,
+            )
+
             await interaction.response.send_message(
-                "Magic Cabinet setup is currently unavailable."
+                embed=embed
             )
             return
 
         if interaction.guild_id is None:
+            embed = discord.Embed(
+                description=(
+                    "This command can only be used "
+                    "inside a server."
+                ),
+                color=CABINET_COLOR,
+            )
+
             await interaction.response.send_message(
-                "This command can only be used inside a server."
+                embed=embed
             )
             return
 
@@ -712,9 +757,58 @@ class Drop(commands.Cog):
         )
 
         if not allowed:
+
+            with sqlite3.connect(DATABASE) as connection:
+                saved_channels = connection.execute(
+                    """
+                    SELECT
+                        channel1_id,
+                        channel2_id,
+                        channel3_id,
+                        channel4_id,
+                        channel5_id
+                    FROM drop_channels
+                    WHERE guild_id = ?
+                    """,
+                    (interaction.guild_id,),
+                ).fetchone()
+
+            channel_mentions = []
+
+            if saved_channels:
+                for channel_id in saved_channels:
+                    if channel_id is None:
+                        continue
+
+                    channel = interaction.guild.get_channel(
+                        channel_id
+                    )
+
+                    if channel is not None:
+                        channel_mentions.append(
+                            channel.mention
+                        )
+
+            if channel_mentions:
+                channel_text = " • ".join(
+                    channel_mentions
+                )
+            else:
+                channel_text = (
+                    "No configured Drop channels."
+                )
+
+            embed = discord.Embed(
+                description=(
+                    "This command can only be used "
+                    "in a configured Drop channel.\n\n"
+                    f"➷ {channel_text}"
+                ),
+                color=CABINET_COLOR,
+            )
+
             await interaction.response.send_message(
-                "This command can only be used in "
-                "a configured Drop channel."
+                embed=embed
             )
             return
 
@@ -723,13 +817,18 @@ class Drop(commands.Cog):
         )
 
         if player_vault is None:
-            await interaction.response.send_message(
-                (
+            embed = discord.Embed(
+                description=(
                     "🔒 This vault remains sealed.\n"
-                    "You haven't chosen this Vault yet.\n\n"
-                    "Use `/vault settings` if you wish to\n"
-                    "change your Vault selection."
+                    "You haven't chosen a Vault yet.\n\n"
+                    "Use `/magic awaken` to begin "
+                    "your Cabinet journey."
                 ),
+                color=CABINET_COLOR,
+            )
+
+            await interaction.response.send_message(
+                embed=embed,
                 ephemeral=True,
             )
             return
@@ -755,20 +854,16 @@ class Drop(commands.Cog):
         embed = discord.Embed(
             description=(
                 "╭─ ⋆⋅☆⋅⋆ ─╮\n"
-                "**This drop is active for 30 seconds.**\n"
+                "**This drop is active for 20 seconds.**\n"
                 "Unlimited players may participate, but the "
                 "drop owner's authority stays put.\n"
                 "╰─ ⋆⋅☆⋅⋆ ─╯\n\n"
-                "-# ✦ Select a card before the 30 seconds end. "
+                "-# ✦ Select a card before the 20 seconds end. "
                 f"**Note** : {OWNER_EMOTE} is only for "
                 "the drop owner!!\n\n"
                 f"{card_information}"
             ),
-            color=discord.Color.from_rgb(
-                212,
-                175,
-                55,
-            ),
+            color=CABINET_COLOR,
         )
 
         embed.set_image(
@@ -799,4 +894,4 @@ async def setup(
 ):
     await bot.add_cog(
         Drop(bot)
-    )
+)
