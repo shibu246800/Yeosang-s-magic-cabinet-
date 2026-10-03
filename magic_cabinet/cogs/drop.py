@@ -23,8 +23,26 @@ DROP_CARD_COUNT = 3
 DROP_DURATION = 20
 
 OWNER_EMOTE = "<:owner_bag:1552939106731032646>"
+GLIMMER_EMOTE = "<:glimmer:1554842064464773172>"
 
 CABINET_COLOR = discord.Color.from_str("#4E0017")
+
+DROP_OWNER_REWARD = 30
+
+RARITY_REWARDS = {
+    "★": 50,
+    "★★": 80,
+    "★★★": 120,
+    "★★★★": 180,
+}
+
+
+RARITY_NAMES = {
+    "★": "Normal",
+    "★★": "Rare",
+    "★★★": "Epic",
+    "★★★★": "Limited",
+}
 
 
 RARITY_CARDS = {
@@ -52,9 +70,10 @@ VAULT_SERIES = {
 
 
 def initialize_bag_database():
-    """Create the Bag table if it does not exist."""
+    """Create Bag and Glimmer tables if they do not exist."""
 
     with sqlite3.connect(DATABASE) as connection:
+
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS bag (
@@ -62,6 +81,15 @@ def initialize_bag_database():
                 card_id INTEGER NOT NULL,
                 quantity INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (user_id, card_id)
+            )
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS balances (
+                user_id INTEGER PRIMARY KEY,
+                glimmers INTEGER NOT NULL DEFAULT 0
             )
             """
         )
@@ -100,6 +128,7 @@ def choose_drop_cards() -> list[dict]:
     available_cards = all_cards.copy()
 
     for _ in range(DROP_CARD_COUNT):
+
         selected_rarity = choose_rarity()
 
         rarity_cards = [
@@ -176,7 +205,7 @@ def get_series(
 def get_card_name(
     card: dict,
 ) -> str:
-    """Return card name, with a safe fallback."""
+    """Return card name."""
 
     return card.get(
         "name",
@@ -212,45 +241,15 @@ def get_card_vault(
     )
 
 
-def format_card(
+def get_rarity_reward(
     card: dict,
-) -> str:
-    """Format one card for the active drop."""
+) -> int:
+    """Return the Glimmer reward for a card rarity."""
 
-    rarity_emote = RARITY_EMOTES[
-        card["stars"]
-    ]
-
-    card_name = get_card_name(
-        card
+    return RARITY_REWARDS.get(
+        card["stars"],
+        0,
     )
-
-    return (
-        f"{rarity_emote} ❖ "
-        f"**{card_name}**"
-    )
-
-
-def get_player_vaults(
-    user_id: int,
-) -> list[str]:
-    """Return all Vaults selected by a player."""
-
-    with sqlite3.connect(DATABASE) as connection:
-        rows = connection.execute(
-            """
-            SELECT vault
-            FROM player_vaults
-            WHERE user_id = ?
-            """,
-            (user_id,),
-        ).fetchall()
-
-    return [
-        row[0]
-        for row in rows
-        if row[0] in {"BB", "GG", "BG"}
-    ]
 
 
 def get_bag_quantity(
@@ -260,6 +259,7 @@ def get_bag_quantity(
     """Return the player's current card quantity."""
 
     with sqlite3.connect(DATABASE) as connection:
+
         row = connection.execute(
             """
             SELECT quantity
@@ -291,6 +291,7 @@ def add_to_bag(
     """
 
     with sqlite3.connect(DATABASE) as connection:
+
         row = connection.execute(
             """
             SELECT quantity
@@ -305,6 +306,7 @@ def add_to_bag(
         ).fetchone()
 
         if row is None:
+
             connection.execute(
                 """
                 INSERT INTO bag (
@@ -345,6 +347,123 @@ def add_to_bag(
         return new_quantity, False
 
 
+def add_glimmers(
+    user_id: int,
+    amount: int,
+):
+    """Add Glimmers to a player's balance."""
+
+    with sqlite3.connect(DATABASE) as connection:
+
+        connection.execute(
+            """
+            INSERT INTO balances (
+                user_id,
+                glimmers
+            )
+            VALUES (?, ?)
+            ON CONFLICT(user_id)
+            DO UPDATE SET
+                glimmers = glimmers + excluded.glimmers
+            """,
+            (
+                user_id,
+                amount,
+            ),
+        )
+
+        connection.commit()
+
+
+def get_player_vaults(
+    user_id: int,
+) -> list[str]:
+    """Return all Vaults selected by a player."""
+
+    with sqlite3.connect(DATABASE) as connection:
+
+        rows = connection.execute(
+            """
+            SELECT vault
+            FROM player_vaults
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchall()
+
+    return [
+        row[0]
+        for row in rows
+        if row[0] in {"BB", "GG", "BG"}
+    ]
+
+
+def format_card(
+    card: dict,
+    owner_id: int,
+) -> str:
+    """Format one card for the active drop."""
+
+    rarity = card["stars"]
+
+    rarity_emote = RARITY_EMOTES[
+        rarity
+    ]
+
+    rarity_name = RARITY_NAMES.get(
+        rarity,
+        "Unknown",
+    )
+
+    reward = get_rarity_reward(
+        card
+    )
+
+    card_name = get_card_name(
+        card
+    )
+
+    collection_id = card[
+        "collection_id"
+    ]
+
+    collection = get_collection(
+        collection_id
+    )
+
+    vault = collection.get(
+        "vault",
+        collection_id.split("_")[0],
+    )
+
+    collection_name = collection.get(
+        "name",
+        "Unknown Collection",
+    )
+
+    owner_has_card = (
+        get_bag_quantity(
+            owner_id,
+            card["id"],
+        )
+        > 0
+    )
+
+    owner_marker = (
+        f"{OWNER_EMOTE} "
+        if owner_has_card
+        else ""
+    )
+
+    return (
+        f"{owner_marker}"
+        f"{rarity_emote} ❖ **{card_name}**\n"
+        f"`{vault}` • **{collection_name}**\n"
+        f"-# {rarity_name} • "
+        f"{GLIMMER_EMOTE} **{reward} Glimmers**"
+    )
+
+
 class CardButton(discord.ui.Button):
     """Button for one dropped card."""
 
@@ -360,7 +479,11 @@ class CardButton(discord.ui.Button):
         self.owner_id = owner_id
         self.card_view = view
 
-        self.claimant: discord.Member | discord.User | None = None
+        self.claimant: (
+            discord.Member
+            | discord.User
+            | None
+        ) = None
 
         rarity_emote = RARITY_EMOTES[
             card["stars"]
@@ -390,6 +513,7 @@ class CardButton(discord.ui.Button):
         async with view.claim_lock:
 
             if view.expired:
+
                 embed = discord.Embed(
                     description=(
                         "✦ This drop has already ended."
@@ -401,6 +525,7 @@ class CardButton(discord.ui.Button):
                     embed=embed,
                     ephemeral=True,
                 )
+
                 return
 
             selected_vaults = get_player_vaults(
@@ -408,6 +533,7 @@ class CardButton(discord.ui.Button):
             )
 
             if not selected_vaults:
+
                 embed = discord.Embed(
                     description=(
                         "🔒 Your Cabinet Vaults are not "
@@ -422,6 +548,7 @@ class CardButton(discord.ui.Button):
                     embed=embed,
                     ephemeral=True,
                 )
+
                 return
 
             card_vault = get_card_vault(
@@ -429,6 +556,7 @@ class CardButton(discord.ui.Button):
             )
 
             if card_vault not in selected_vaults:
+
                 embed = discord.Embed(
                     description=(
                         f"🔒 This card belongs to the "
@@ -448,6 +576,7 @@ class CardButton(discord.ui.Button):
                     embed=embed,
                     ephemeral=True,
                 )
+
                 return
 
             is_owner = (
@@ -463,6 +592,7 @@ class CardButton(discord.ui.Button):
             if not is_owner:
 
                 if previous_choice is not None:
+
                     embed = discord.Embed(
                         description=(
                             "✦ You have already claimed "
@@ -477,9 +607,11 @@ class CardButton(discord.ui.Button):
                         embed=embed,
                         ephemeral=True,
                     )
+
                     return
 
                 if self.claimant is not None:
+
                     embed = discord.Embed(
                         description=(
                             "✦ This card has already "
@@ -492,6 +624,7 @@ class CardButton(discord.ui.Button):
                         embed=embed,
                         ephemeral=True,
                     )
+
                     return
 
                 self.claimant = interaction.user
@@ -503,6 +636,7 @@ class CardButton(discord.ui.Button):
             else:
 
                 if previous_choice == self.number:
+
                     embed = discord.Embed(
                         description=(
                             f"{OWNER_EMOTE} You are already "
@@ -515,9 +649,11 @@ class CardButton(discord.ui.Button):
                         embed=embed,
                         ephemeral=True,
                     )
+
                     return
 
                 if previous_choice is not None:
+
                     previous_button = (
                         view.get_button(
                             previous_choice
@@ -525,6 +661,7 @@ class CardButton(discord.ui.Button):
                     )
 
                     if previous_button is not None:
+
                         previous_claimant = (
                             previous_button.claimant
                         )
@@ -534,13 +671,18 @@ class CardButton(discord.ui.Button):
                             and previous_claimant.id
                             == user_id
                         ):
+
                             previous_button.claimant = None
                             previous_button.label = "0"
 
                 if self.claimant is not None:
-                    previous_claimant = self.claimant
+
+                    previous_claimant = (
+                        self.claimant
+                    )
 
                     if previous_claimant.id != user_id:
+
                         old_choice = (
                             view.player_choices.get(
                                 previous_claimant.id
@@ -548,6 +690,7 @@ class CardButton(discord.ui.Button):
                         )
 
                         if old_choice == self.number:
+
                             del view.player_choices[
                                 previous_claimant.id
                             ]
@@ -558,7 +701,11 @@ class CardButton(discord.ui.Button):
                     self.number
                 )
 
-            self.label = "1" if self.claimant else "0"
+            self.label = (
+                "1"
+                if self.claimant
+                else "0"
+            )
 
         await interaction.response.defer(
             ephemeral=True
@@ -589,7 +736,10 @@ class CardDropView(discord.ui.View):
 
         self.expired = False
 
-        self.message: discord.Message | None = None
+        self.message: (
+            discord.Message
+            | None
+        ) = None
 
         self.claim_lock = asyncio.Lock()
 
@@ -597,6 +747,7 @@ class CardDropView(discord.ui.View):
             cards,
             start=1,
         ):
+
             self.add_item(
                 CardButton(
                     card,
@@ -613,10 +764,12 @@ class CardDropView(discord.ui.View):
         """Return a button by card number."""
 
         for item in self.children:
+
             if isinstance(
                 item,
                 CardButton,
             ):
+
                 if item.number == number:
                     return item
 
@@ -629,9 +782,11 @@ class CardDropView(discord.ui.View):
             return
 
         try:
+
             await self.message.edit(
                 view=self
             )
+
         except discord.NotFound:
             pass
 
@@ -639,20 +794,26 @@ class CardDropView(discord.ui.View):
         """Finish the drop after 20 seconds."""
 
         async with self.claim_lock:
+
             self.expired = True
 
             for item in self.children:
+
                 if isinstance(
                     item,
                     CardButton,
                 ):
+
                     item.disabled = True
 
         if self.message is not None:
+
             try:
+
                 await self.message.edit(
                     view=self
                 )
+
             except discord.NotFound:
                 pass
 
@@ -685,13 +846,46 @@ class CardDropView(discord.ui.View):
                 card
             )
 
+            rarity = card["stars"]
+            rarity_name = RARITY_NAMES.get(
+                rarity,
+                "Unknown",
+            )
+
+            rarity_reward = get_rarity_reward(
+                card
+            )
+
+            collection_id = card[
+                "collection_id"
+            ]
+
+            collection = get_collection(
+                collection_id
+            )
+
+            vault = collection.get(
+                "vault",
+                collection_id.split("_")[0],
+            )
+
+            collection_name = collection.get(
+                "name",
+                "Unknown Collection",
+            )
+
             if item.claimant is None:
+
                 result_lines.append(
                     (
                         f"**Card {card_number}**\n"
+                        f"{rarity_name} • "
+                        f"`{vault}` • "
+                        f"**{collection_name}**\n"
                         "No selections"
                     )
                 )
+
                 continue
 
             claimant = item.claimant
@@ -701,23 +895,55 @@ class CardDropView(discord.ui.View):
                 card["id"],
             )
 
+            add_glimmers(
+                claimant.id,
+                rarity_reward,
+            )
+
             if was_new:
+
                 status = (
                     "You got a new card!"
                 )
+
             else:
+
                 status = (
                     f"You now have **{quantity}** copies!\n"
                     "You got a dupie! You can either: "
                     "`/sell` or `/merge`"
                 )
 
+            if claimant.id == self.owner_id:
+
+                add_glimmers(
+                    claimant.id,
+                    DROP_OWNER_REWARD,
+                )
+
+                reward_text = (
+                    f"{GLIMMER_EMOTE} **+{DROP_OWNER_REWARD}** "
+                    "Drop reward\n"
+                    f"{GLIMMER_EMOTE} **+{rarity_reward}** "
+                    f"{rarity_name} reward"
+                )
+
+            else:
+
+                reward_text = (
+                    f"{GLIMMER_EMOTE} **+{rarity_reward}** "
+                    f"{rarity_name} reward"
+                )
+
             if image_url:
+
                 name_line = (
                     f"**Card {card_number}**\n"
                     f"[{card_name}]({image_url})"
                 )
+
             else:
+
                 name_line = (
                     f"**Card {card_number}**\n"
                     f"**{card_name}**"
@@ -726,8 +952,11 @@ class CardDropView(discord.ui.View):
             result_lines.append(
                 (
                     f"{name_line}\n"
+                    f"`{vault}` • **{collection_name}**\n"
                     f"{claimant.mention}\n\n"
-                    f"{status}"
+                    f"{status}\n\n"
+                    f"✦ **Rewards**\n"
+                    f"{reward_text}"
                 )
             )
 
@@ -782,6 +1011,7 @@ class Drop(commands.Cog):
         )
 
         if cabinet is None:
+
             embed = discord.Embed(
                 description=(
                     "The Magic Cabinet setup is "
@@ -793,9 +1023,11 @@ class Drop(commands.Cog):
             await interaction.response.send_message(
                 embed=embed
             )
+
             return
 
         if interaction.guild_id is None:
+
             embed = discord.Embed(
                 description=(
                     "This command can only be used "
@@ -807,6 +1039,7 @@ class Drop(commands.Cog):
             await interaction.response.send_message(
                 embed=embed
             )
+
             return
 
         allowed = cabinet.is_drop_channel(
@@ -817,6 +1050,7 @@ class Drop(commands.Cog):
         if not allowed:
 
             with sqlite3.connect(DATABASE) as connection:
+
                 saved_channels = connection.execute(
                     """
                     SELECT
@@ -834,24 +1068,32 @@ class Drop(commands.Cog):
             channel_mentions = []
 
             if saved_channels:
+
                 for channel_id in saved_channels:
+
                     if channel_id is None:
                         continue
 
-                    channel = interaction.guild.get_channel(
-                        channel_id
+                    channel = (
+                        interaction.guild.get_channel(
+                            channel_id
+                        )
                     )
 
                     if channel is not None:
+
                         channel_mentions.append(
                             channel.mention
                         )
 
             if channel_mentions:
+
                 channel_text = " • ".join(
                     channel_mentions
                 )
+
             else:
+
                 channel_text = (
                     "No configured Drop channels."
                 )
@@ -868,6 +1110,7 @@ class Drop(commands.Cog):
             await interaction.response.send_message(
                 embed=embed
             )
+
             return
 
         has_vault = bool(
@@ -877,6 +1120,7 @@ class Drop(commands.Cog):
         )
 
         if not has_vault:
+
             embed = discord.Embed(
                 description=(
                     "🔒 This vault remains sealed.\n"
@@ -891,14 +1135,18 @@ class Drop(commands.Cog):
                 embed=embed,
                 ephemeral=True,
             )
+
             return
 
         await interaction.response.defer()
 
         cards = choose_drop_cards()
 
-        card_information = "\n".join(
-            format_card(card)
+        card_information = "\n\n".join(
+            format_card(
+                card,
+                interaction.user.id,
+            )
             for card in cards
         )
 
@@ -918,9 +1166,13 @@ class Drop(commands.Cog):
                 "Unlimited players may participate, but the "
                 "drop owner's authority stays put.\n"
                 "╰─ ⋆⋅☆⋅⋆ ─╯\n\n"
-                "-# ✦ Select a card before the 20 seconds end. "
-                f"**Note** : {OWNER_EMOTE} is only for "
-                "the drop owner!!\n\n"
+                "-# ✦ Select a card before the 20 seconds end.\n"
+                f"-# {OWNER_EMOTE} = already in the "
+                "drop owner's Bag\n\n"
+                "✦ **Rewards**\n"
+                f"-# {OWNER_EMOTE} Drop owner: "
+                f"{GLIMMER_EMOTE} **+30 Glimmers**\n"
+                "-# ✦ Card reward: based on rarity\n\n"
                 f"{card_information}"
             ),
             color=CABINET_COLOR,
@@ -954,4 +1206,4 @@ async def setup(
 ):
     await bot.add_cog(
         Drop(bot)
-        )
+)
