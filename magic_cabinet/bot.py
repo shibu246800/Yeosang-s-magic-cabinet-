@@ -46,7 +46,8 @@ async def setup_hook():
     await bot.load_extension("magic_cabinet.cogs.cabinet")
     await bot.load_extension("magic_cabinet.cogs.drop")
     await bot.load_extension("magic_cabinet.cogs.magic")
-
+    await bot.load_extension("magic_cabinet.cogs.profile.profile")
+   
     await bot.tree.sync()
 
 
