@@ -29,6 +29,12 @@ CABINET_COLOR = discord.Color.from_str("#4E0017")
 
 DROP_OWNER_REWARD = 30
 
+POSITION_EMOTES = {
+    1: "<:emoji_16:1555890252118368336>",
+    2: "<:emoji_17:1555890288667402241>",
+    3: "<:emoji_18:1555890318057013248>",
+}
+
 RARITY_REWARDS = {
     "★": 50,
     "★★": 80,
@@ -224,17 +230,6 @@ def get_card_image(
     )
 
 
-def get_card_emoji(
-    card: dict,
-) -> str:
-    """Return card emoji."""
-
-    return card.get(
-        "emoji",
-        "",
-    )
-
-
 def get_card_vault(
     card: dict,
 ) -> str:
@@ -412,6 +407,7 @@ def get_player_vaults(
 def format_card(
     card: dict,
     owner_id: int,
+    position: int,
 ) -> str:
     """Format one card for the active drop."""
 
@@ -421,9 +417,9 @@ def format_card(
         rarity
     ]
 
-    card_emoji = get_card_emoji(
-        card
-    )
+    position_emote = POSITION_EMOTES[
+        position
+    ]
 
     collection_id = card[
         "collection_id"
@@ -459,7 +455,7 @@ def format_card(
 
     return (
         f"{owner_marker}"
-        f"{rarity_emote} ❖ {card_emoji}\n"
+        f"{rarity_emote} ❖ {position_emote} "
         f"`{vault}` • **{collection_name}**"
     )
 
@@ -971,7 +967,7 @@ class CardDropView(discord.ui.View):
             "           ✨ CONGRATS! The results are in.\n"
             "╰────────────── ✦ ──────────────╯\n\n"
             + "\n"
-            "╰─────── ⋆⋅☆⋅⋆ ───────╯\n".join(
+            "╰─────── ⋆⋅☆⋅⋆ ───────╯".join(
                 result_lines
             )
             + "\n"
@@ -1152,8 +1148,12 @@ class Drop(commands.Cog):
             format_card(
                 card,
                 interaction.user.id,
+                position,
             )
-            for card in cards
+            for position, card in enumerate(
+                cards,
+                start=1,
+            )
         )
 
         card_strip = await create_card_strip(
