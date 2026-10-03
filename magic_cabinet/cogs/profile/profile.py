@@ -368,7 +368,7 @@ def build_profile_embed(
     if badges:
 
         description += (
-            f"\n"
+            "\n"
             f"{PROFILE_EMOTES['badges']} "
             f"**Badges**\n"
             f"{format_badges(badges)}\n"
@@ -377,7 +377,7 @@ def build_profile_embed(
     if achievements:
 
         description += (
-            f"\n"
+            "\n"
             f"{PROFILE_EMOTES['achievements']} "
             f"**Global Achievements**\n"
             f"{format_achievements(achievements)}\n"
@@ -395,10 +395,6 @@ def build_profile_embed(
 
     embed.set_image(
         url=HEADER_URL
-    )
-
-    embed.set_thumbnail(
-        url=DIVIDER_URL
     )
 
     embed.set_footer(
@@ -439,8 +435,19 @@ class Profile(commands.Cog):
             target
         )
 
+        divider_embed = discord.Embed(
+            color=EMBED_COLOR,
+        )
+
+        divider_embed.set_image(
+            url=DIVIDER_URL
+        )
+
         await interaction.response.send_message(
-            embed=embed
+            embeds=[
+                embed,
+                divider_embed,
+            ]
         )
 
 
@@ -449,4 +456,4 @@ async def setup(
 ):
     await bot.add_cog(
         Profile(bot)
-  )
+)
