@@ -224,6 +224,17 @@ def get_card_image(
     )
 
 
+def get_card_emoji(
+    card: dict,
+) -> str:
+    """Return card emoji."""
+
+    return card.get(
+        "emoji",
+        "",
+    )
+
+
 def get_card_vault(
     card: dict,
 ) -> str:
@@ -410,16 +421,7 @@ def format_card(
         rarity
     ]
 
-    rarity_name = RARITY_NAMES.get(
-        rarity,
-        "Unknown",
-    )
-
-    reward = get_rarity_reward(
-        card
-    )
-
-    card_name = get_card_name(
+    card_emoji = get_card_emoji(
         card
     )
 
@@ -457,10 +459,8 @@ def format_card(
 
     return (
         f"{owner_marker}"
-        f"{rarity_emote} ❖ **{card_name}**\n"
-        f"`{vault}` • **{collection_name}**\n"
-        f"-# {rarity_name} • "
-        f"{GLIMMER_EMOTE} **{reward} Glimmers**"
+        f"{rarity_emote} ❖ {card_emoji}\n"
+        f"`{vault}` • **{collection_name}**"
     )
 
 
@@ -838,19 +838,11 @@ class CardDropView(discord.ui.View):
             card = item.card
             card_number = item.number
 
-            card_name = get_card_name(
-                card
-            )
-
             image_url = get_card_image(
                 card
             )
 
             rarity = card["stars"]
-            rarity_name = RARITY_NAMES.get(
-                rarity,
-                "Unknown",
-            )
 
             rarity_reward = get_rarity_reward(
                 card
@@ -874,15 +866,20 @@ class CardDropView(discord.ui.View):
                 "Unknown Collection",
             )
 
+            series_name = get_series(
+                collection_id
+            )
+
             if item.claimant is None:
 
                 result_lines.append(
                     (
                         f"**Card {card_number}**\n"
-                        f"{rarity_name} • "
-                        f"`{vault}` • "
-                        f"**{collection_name}**\n"
-                        "No selections"
+                        f"No selections\n"
+                        f"-# ☆ Card ID: `{card['id']}` ☆ "
+                        f"Collection ID: `{collection_id}` "
+                        f"({collection_name}) ☆ "
+                        f"Series: {series_name} ({vault})"
                     )
                 )
 
@@ -914,6 +911,8 @@ class CardDropView(discord.ui.View):
                     "`/sell` or `/merge`"
                 )
 
+            total_reward = rarity_reward
+
             if claimant.id == self.owner_id:
 
                 add_glimmers(
@@ -921,41 +920,48 @@ class CardDropView(discord.ui.View):
                     DROP_OWNER_REWARD,
                 )
 
+                total_reward += (
+                    DROP_OWNER_REWARD
+                )
+
                 reward_text = (
-                    f"{GLIMMER_EMOTE} **+{DROP_OWNER_REWARD}** "
-                    "Drop reward\n"
-                    f"{GLIMMER_EMOTE} **+{rarity_reward}** "
-                    f"{rarity_name} reward"
+                    f"-# {rarity} 》 "
+                    f"{rarity_reward} + "
+                    f"{DROP_OWNER_REWARD} (drop rewards) "
+                    f"= {total_reward} {GLIMMER_EMOTE} "
+                    "are added to your purse!"
                 )
 
             else:
 
                 reward_text = (
-                    f"{GLIMMER_EMOTE} **+{rarity_reward}** "
-                    f"{rarity_name} reward"
+                    f"-# {rarity} 》 "
+                    f"{rarity_reward} {GLIMMER_EMOTE} "
+                    "of glimmers are added to your purse!"
                 )
 
             if image_url:
 
-                name_line = (
-                    f"**Card {card_number}**\n"
-                    f"[{card_name}]({image_url})"
+                view_line = (
+                    f"[View]({image_url}) "
+                    f"{claimant.mention}"
                 )
 
             else:
 
-                name_line = (
-                    f"**Card {card_number}**\n"
-                    f"**{card_name}**"
+                view_line = (
+                    f"{claimant.mention}"
                 )
 
             result_lines.append(
                 (
-                    f"{name_line}\n"
-                    f"`{vault}` • **{collection_name}**\n"
-                    f"{claimant.mention}\n\n"
+                    f"**Card {card_number}**\n"
+                    f"{view_line}\n"
+                    f"-# ☆ Card ID: `{card['id']}` ☆ "
+                    f"Collection ID: `{collection_id}` "
+                    f"({collection_name}) ☆ "
+                    f"Series: {series_name} ({vault})\n\n"
                     f"{status}\n\n"
-                    f"✦ **Rewards**\n"
                     f"{reward_text}"
                 )
             )
@@ -965,7 +971,7 @@ class CardDropView(discord.ui.View):
             "           ✨ CONGRATS! The results are in.\n"
             "╰────────────── ✦ ──────────────╯\n\n"
             + "\n"
-            "────────────── ✦ ──────────────\n".join(
+            "╰─────── ⋆⋅☆⋅⋆ ───────╯\n".join(
                 result_lines
             )
             + "\n"
@@ -1167,12 +1173,8 @@ class Drop(commands.Cog):
                 "drop owner's authority stays put.\n"
                 "╰─ ⋆⋅☆⋅⋆ ─╯\n\n"
                 "-# ✦ Select a card before the 20 seconds end.\n"
-                f"-# {OWNER_EMOTE} = already in the "
+                f"-# {OWNER_EMOTE} = already exist in the "
                 "drop owner's Bag\n\n"
-                "✦ **Rewards**\n"
-                f"-# {OWNER_EMOTE} Drop owner: "
-                f"{GLIMMER_EMOTE} **+30 Glimmers**\n"
-                "-# ✦ Card reward: based on rarity\n\n"
                 f"{card_information}"
             ),
             color=CABINET_COLOR,
