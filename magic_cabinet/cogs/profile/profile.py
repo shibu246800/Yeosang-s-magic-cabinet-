@@ -43,12 +43,6 @@ PROFILE_EMOTES = {
     "achievements": "<:emoji_27:1555925990545297478>",
 }
 
-VAULT_NAMES = {
-    "BB": "Boy × Boy",
-    "GG": "Girl × Girl",
-    "BG": "Boy × Girl",
-}
-
 VAULT_ORDER = ["BB", "GG", "BG"]
 
 ALL_CARDS = (
@@ -169,12 +163,7 @@ def get_bag_cards(
 def get_completed_collections(
     user_id: int,
 ) -> int:
-    """
-    Count fully completed collections.
-
-    A collection requires all six base cards plus
-    its Legendary card.
-    """
+    """Count fully completed collections."""
 
     owned_cards = get_bag_cards(
         user_id
@@ -210,11 +199,12 @@ def get_completed_collections(
             for card in base_cards
         )
 
-        legendary_complete = bool(
-            legendary_cards
-        ) and all(
-            card["id"] in owned_cards
-            for card in legendary_cards
+        legendary_complete = (
+            bool(legendary_cards)
+            and all(
+                card["id"] in owned_cards
+                for card in legendary_cards
+            )
         )
 
         if base_complete and legendary_complete:
@@ -295,7 +285,6 @@ def format_badges(
             lines.append(
                 f"{badge_emote} **{badge_name}**"
             )
-
         else:
             lines.append(
                 f"🏅 **{badge_name}**"
@@ -323,10 +312,10 @@ def format_achievements(
     return "\n".join(lines)
 
 
-def build_profile_embed(
+def build_profile_content(
     user: discord.User,
 ) -> discord.Embed:
-    """Build the live profile embed."""
+    """Build the live profile content embed."""
 
     vaults = get_player_vaults(
         user.id
@@ -362,25 +351,25 @@ def build_profile_embed(
         f"{glimmers:,} {GLIMMER_EMOTE}\n\n"
         f"{PROFILE_EMOTES['collections']} "
         f"**Collections Completed**\n"
-        f"**{completed_collections}**\n"
+        f"**{completed_collections}**"
     )
 
     if badges:
 
         description += (
-            "\n"
+            "\n\n"
             f"{PROFILE_EMOTES['badges']} "
             f"**Badges**\n"
-            f"{format_badges(badges)}\n"
+            f"{format_badges(badges)}"
         )
 
     if achievements:
 
         description += (
-            "\n"
+            "\n\n"
             f"{PROFILE_EMOTES['achievements']} "
             f"**Global Achievements**\n"
-            f"{format_achievements(achievements)}\n"
+            f"{format_achievements(achievements)}"
         )
 
     embed = discord.Embed(
@@ -391,10 +380,6 @@ def build_profile_embed(
     embed.set_author(
         name=f"{user.display_name}'s Profile",
         icon_url=user.display_avatar.url,
-    )
-
-    embed.set_image(
-        url=HEADER_URL
     )
 
     embed.set_footer(
@@ -431,7 +416,15 @@ class Profile(commands.Cog):
 
         target = user or interaction.user
 
-        embed = build_profile_embed(
+        header_embed = discord.Embed(
+            color=EMBED_COLOR,
+        )
+
+        header_embed.set_image(
+            url=HEADER_URL
+        )
+
+        profile_embed = build_profile_content(
             target
         )
 
@@ -445,7 +438,8 @@ class Profile(commands.Cog):
 
         await interaction.response.send_message(
             embeds=[
-                embed,
+                header_embed,
+                profile_embed,
                 divider_embed,
             ]
         )
@@ -456,4 +450,4 @@ async def setup(
 ):
     await bot.add_cog(
         Profile(bot)
-)
+            )
