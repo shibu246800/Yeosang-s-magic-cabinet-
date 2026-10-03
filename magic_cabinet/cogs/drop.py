@@ -866,11 +866,15 @@ class CardDropView(discord.ui.View):
                 collection_id
             )
 
+            position_emote = POSITION_EMOTES[
+                card_number
+            ]
+
             if item.claimant is None:
 
                 result_lines.append(
                     (
-                        f"**Card {card_number}**\n"
+                        f"**{position_emote}**\n"
                         f"No selections\n"
                         f"-# ☆ Card ID: `{card['id']}` ☆ "
                         f"Collection ID: `{collection_id}` "
@@ -951,7 +955,7 @@ class CardDropView(discord.ui.View):
 
             result_lines.append(
                 (
-                    f"**Card {card_number}**\n"
+                    f"**{position_emote}**\n"
                     f"{view_line}\n"
                     f"-# ☆ Card ID: `{card['id']}` ☆ "
                     f"Collection ID: `{collection_id}` "
@@ -967,7 +971,7 @@ class CardDropView(discord.ui.View):
             "           ✨ CONGRATS! The results are in.\n"
             "╰────────────── ✦ ──────────────╯\n\n"
             + "\n"
-            "╰─────── ⋆⋅☆⋅⋆ ───────╯".join(
+            "╰─────── ⋆⋅☆⋅⋆ ───────╯\n".join(
                 result_lines
             )
             + "\n"
