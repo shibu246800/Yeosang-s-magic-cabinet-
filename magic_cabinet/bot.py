@@ -43,6 +43,8 @@ bot = commands.Bot(
 
 
 async def setup_hook():
+    print("=== SETUP HOOK STARTED ===")
+
     await bot.load_extension("magic_cabinet.cogs.cabinet")
     await bot.load_extension("magic_cabinet.cogs.drop")
     await bot.load_extension("magic_cabinet.cogs.magic")
