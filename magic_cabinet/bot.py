@@ -36,32 +36,52 @@ threading.Thread(
 
 intents = discord.Intents.default()
 
-bot = commands.Bot(
+
+class MagicCabinetBot(commands.Bot):
+
+    async def setup_hook(self):
+        print("=== SETUP HOOK STARTED ===")
+
+        await self.load_extension(
+            "magic_cabinet.cogs.cabinet"
+        )
+
+        await self.load_extension(
+            "magic_cabinet.cogs.drop"
+        )
+
+        await self.load_extension(
+            "magic_cabinet.cogs.magic"
+        )
+
+        await self.load_extension(
+            "magic_cabinet.cogs.profile.profile"
+        )
+
+        await self.load_extension(
+            "magic_cabinet.cogs.purse"
+        )
+
+        print("=== ALL EXTENSIONS LOADED ===")
+
+        synced = await self.tree.sync()
+
+        print(
+            f"=== SYNCED {len(synced)} APPLICATION COMMANDS ==="
+        )
+
+
+bot = MagicCabinetBot(
     command_prefix="!",
     intents=intents,
 )
 
 
-async def setup_hook():
-    print("=== SETUP HOOK STARTED ===")
-
-    await bot.load_extension("magic_cabinet.cogs.cabinet")
-    await bot.load_extension("magic_cabinet.cogs.drop")
-    await bot.load_extension("magic_cabinet.cogs.magic")
-    await bot.load_extension("magic_cabinet.cogs.profile.profile")
-    await bot.load_extension("magic_cabinet.cogs.purse")
-
-    synced = await bot.tree.sync()
-
-    print(f"Synced {len(synced)} application commands.")
-
-
-bot.setup_hook = setup_hook
-
-
 @bot.event
 async def on_ready():
-    print(f"Magic Cabinet is online as {bot.user}")
+    print(
+        f"Magic Cabinet is online as {bot.user}"
+    )
 
 
 @bot.event
@@ -110,13 +130,17 @@ __Next step:   FOR PLAYERS 】__
         ):
             try:
                 await channel.send(embed=embed)
+
                 print(
                     f"Arrival message sent in #{channel.name} "
                     f"in {guild.name}"
                 )
+
                 break
+
             except discord.Forbidden:
                 continue
+
             except discord.HTTPException:
                 continue
 
