@@ -48,8 +48,10 @@ async def setup_hook():
     await bot.load_extension("magic_cabinet.cogs.magic")
     await bot.load_extension("magic_cabinet.cogs.profile.profile")
     await bot.load_extension("magic_cabinet.cogs.purse")
-   
-    await bot.tree.sync()
+
+    synced = await bot.tree.sync()
+
+    print(f"Synced {len(synced)} application commands.")
 
 
 bot.setup_hook = setup_hook
