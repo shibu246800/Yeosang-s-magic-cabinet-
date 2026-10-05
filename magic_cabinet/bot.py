@@ -44,35 +44,16 @@ class MagicCabinetBot(commands.Bot):
     async def setup_hook(self):
         print("=== SETUP HOOK STARTED ===")
 
-        await self.load_extension(
-            "magic_cabinet.cogs.cabinet"
-        )
-
-        await self.load_extension(
-            "magic_cabinet.cogs.drop"
-        )
-
-        await self.load_extension(
-            "magic_cabinet.cogs.magic"
-        )
-
-        await self.load_extension(
-            "magic_cabinet.cogs.profile.profile"
-        )
-
-        await self.load_extension(
-            "magic_cabinet.cogs.purse"
-        )
-
-        await self.load_extension(
-            "magic_cabinet.cogs.earn"
-        )
-        
-        await self.load_extension("magic_cabinet.cogs.daily")
-        
-        await self.load_extension("magic_cabinet.cogs.booster")
-        
-        await self.load_extension("magic_cabinet.cogs.weekly")
+        await self.load_extension("magic_cabinet.cogs.cabinet")
+await self.load_extension("magic_cabinet.cogs.drop")
+await self.load_extension("magic_cabinet.cogs.magic")
+await self.load_extension("magic_cabinet.cogs.profile.profile")
+await self.load_extension("magic_cabinet.cogs.purse")
+await self.load_extension("magic_cabinet.cogs.earn")
+await self.load_extension("magic_cabinet.cogs.daily")
+await self.load_extension("magic_cabinet.cogs.booster")
+await self.load_extension("magic_cabinet.cogs.weekly")
+await self.load_extension("magic_cabinet.cogs.rewards")
       
         print("=== ALL EXTENSIONS LOADED ===")
 
