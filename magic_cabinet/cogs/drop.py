@@ -15,6 +15,7 @@ from magic_cabinet.data.epic import CARDS as EPIC_CARDS
 from magic_cabinet.data.limited import CARDS as LIMITED_CARDS
 from magic_cabinet.data.normal import CARDS as NORMAL_CARDS
 from magic_cabinet.data.rare import CARDS as RARE_CARDS
+from magic_cabinet.weekly_tracker import record_weekly_progress
 
 
 DATABASE = "cabinet.db"
@@ -42,14 +43,12 @@ RARITY_REWARDS = {
     "★★★★": 180,
 }
 
-
 RARITY_NAMES = {
     "★": "Normal",
     "★★": "Rare",
     "★★★": "Epic",
     "★★★★": "Limited",
 }
-
 
 RARITY_CARDS = {
     "★": NORMAL_CARDS,
@@ -58,7 +57,6 @@ RARITY_CARDS = {
     "★★★★": LIMITED_CARDS,
 }
 
-
 RARITY_EMOTES = {
     "★": "<:silver_normal:1552761791606689933>",
     "★★": "<:sapphire_rare:1552761835587899513>",
@@ -66,7 +64,6 @@ RARITY_EMOTES = {
     "★★★★": "<:bloodrose_limited:1552761891472810144>",
     "★★★★★": "<:golden_legendary:1552761908652671056>",
 }
-
 
 VAULT_SERIES = {
     "BB": "Velvet Moon",
@@ -897,6 +894,23 @@ class CardDropView(discord.ui.View):
                 rarity_reward,
             )
 
+            # Weekly challenge tracking.
+            # A successful card claim counts as one Drop.
+            record_weekly_progress(
+                claimant.id,
+                "drops_claimed",
+                1,
+            )
+
+            # New cards count separately for the
+            # weekly "Collect new cards" challenge.
+            if was_new:
+                record_weekly_progress(
+                    claimant.id,
+                    "new_cards",
+                    1,
+                )
+
             if was_new:
 
                 status = (
@@ -1212,4 +1226,4 @@ async def setup(
 ):
     await bot.add_cog(
         Drop(bot)
-)
+        )
