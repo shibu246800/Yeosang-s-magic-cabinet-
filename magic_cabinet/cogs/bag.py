@@ -46,6 +46,22 @@ RARITY_ORDER = {
 }
 
 
+def make_header_embed() -> discord.Embed:
+    embed = discord.Embed(
+        color=EMBED_COLOR,
+    )
+    embed.set_image(url=HEADER_URL)
+    return embed
+
+
+def make_footer_embed() -> discord.Embed:
+    embed = discord.Embed(
+        color=EMBED_COLOR,
+    )
+    embed.set_image(url=FOOTER_URL)
+    return embed
+
+
 class BagView(discord.ui.View):
     def __init__(
         self,
@@ -59,8 +75,7 @@ class BagView(discord.ui.View):
         self.cards = cards
         self.filter_name = filter_name
         self.page = 0
-
-        self.previous.disabled = True
+        self.message_id: int | None = None
 
         self.update_buttons()
 
@@ -100,23 +115,17 @@ class BagView(discord.ui.View):
                 if current_rarity is not None:
                     lines.append("")
 
-                lines.append(
-                    f"**{rarity}**"
-                )
-
+                lines.append(f"**{rarity}**")
                 current_rarity = rarity
 
             lines.append(
-                f"`[{card['id']}]` (png) "
+                f"`[{card['id']}]` "
+                f"[png]({card['image']}) "
                 f"{card['vault']} × **{card['quantity']}**"
             )
 
         if not page_cards:
-            lines.extend(
-                [
-                    "✦ Your Bag is empty.",
-                ]
-            )
+            lines.append("✦ Your Bag is empty.")
 
         total_pages = max(
             1,
@@ -131,20 +140,38 @@ class BagView(discord.ui.View):
             ]
         )
 
-        embed = discord.Embed(
+        return discord.Embed(
             description="\n".join(lines),
             color=EMBED_COLOR,
         )
 
-        embed.set_image(
-            url=HEADER_URL
-        )
+    async def check_user(
+        self,
+        interaction: discord.Interaction,
+    ) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "✦ This Bag belongs to another player.",
+                ephemeral=True,
+            )
+            return False
 
-        embed.set_footer(
-            icon_url=FOOTER_URL
-        )
+        return True
 
-        return embed
+    async def update_main_message(
+        self,
+        interaction: discord.Interaction,
+    ):
+        if self.message_id is None:
+            return
+
+        await interaction.followup.edit_message(
+            self.message_id,
+            embed=self.build_embed(
+                interaction.user
+            ),
+            view=self,
+        )
 
     @discord.ui.button(
         label="《",
@@ -155,11 +182,7 @@ class BagView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                "✦ This Bag belongs to another player.",
-                ephemeral=True,
-            )
+        if not await self.check_user(interaction):
             return
 
         if self.page > 0:
@@ -183,11 +206,7 @@ class BagView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                "✦ This Bag belongs to another player.",
-                ephemeral=True,
-            )
+        if not await self.check_user(interaction):
             return
 
         total_pages = max(
@@ -217,11 +236,7 @@ class BagView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                "✦ This Bag belongs to another player.",
-                ephemeral=True,
-            )
+        if not await self.check_user(interaction):
             return
 
         await interaction.response.send_message(
@@ -245,11 +260,7 @@ class BagView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                "✦ This Bag belongs to another player.",
-                ephemeral=True,
-            )
+        if not await self.check_user(interaction):
             return
 
         await interaction.response.send_modal(
@@ -313,21 +324,22 @@ class SortSelect(discord.ui.Select):
             )
             return
 
-        filtered = get_bag_cards(
+        self.parent_view.cards = get_bag_cards(
             self.user_id,
             self.values[0],
         )
 
-        self.parent_view.cards = filtered
         self.parent_view.page = 0
         self.parent_view.filter_name = self.values[0]
         self.parent_view.update_buttons()
 
-        await interaction.response.edit_message(
-            embed=self.parent_view.build_embed(
-                interaction.user
-            ),
-            view=self.parent_view,
+        await interaction.response.send_message(
+            "✦ Bag updated.",
+            ephemeral=True,
+        )
+
+        await self.parent_view.update_main_message(
+            interaction
         )
 
 
@@ -375,21 +387,22 @@ class BagSearchModal(discord.ui.Modal):
     ):
         query = self.search.value.strip()
 
-        cards = search_bag_cards(
+        self.parent_view.cards = search_bag_cards(
             self.user_id,
             query,
         )
 
-        self.parent_view.cards = cards
         self.parent_view.page = 0
         self.parent_view.filter_name = "search"
         self.parent_view.update_buttons()
 
-        await interaction.response.edit_message(
-            embed=self.parent_view.build_embed(
-                interaction.user
-            ),
-            view=self.parent_view,
+        await interaction.response.send_message(
+            "✦ Bag updated.",
+            ephemeral=True,
+        )
+
+        await self.parent_view.update_main_message(
+            interaction
         )
 
 
@@ -461,6 +474,7 @@ def get_bag_cards(
                     card["collection_id"]
                 ),
                 "quantity": quantity,
+                "image": card["image"],
             }
         )
 
@@ -526,10 +540,21 @@ class Bag(commands.Cog):
         )
 
         await interaction.response.send_message(
+            embed=make_header_embed()
+        )
+
+        main_message = await interaction.followup.send(
             embed=view.build_embed(
                 interaction.user
             ),
             view=view,
+            wait=True,
+        )
+
+        view.message_id = main_message.id
+
+        await interaction.followup.send(
+            embed=make_footer_embed()
         )
 
 
