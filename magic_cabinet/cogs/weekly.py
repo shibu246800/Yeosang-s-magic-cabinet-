@@ -30,9 +30,7 @@ WEEKLY_HEADER_URL = (
 )
 
 WEEKLY_GUARANTEED_GLIMMERS = 10_000
-
 WEEKLY_GRAND_GLIMMERS = 25_000
-
 WEEKLY_RESET_DAYS = 7
 
 
@@ -221,12 +219,14 @@ def generate_tasks():
         template = random.choice(pool)
 
         if template["id"] in {
-            task["id"]
+            task["base_id"]
             for task in selected_tasks
         }:
             continue
 
         task = dict(template)
+
+        task["base_id"] = template["id"]
 
         task["amount"] = random.randint(
             template["minimum"],
@@ -244,6 +244,11 @@ def generate_tasks():
             else "medium"
             if template in MEDIUM_TASKS
             else "hard"
+        )
+
+        task["id"] = (
+            f"{task['difficulty']}_"
+            f"{template['id']}"
         )
 
         task["display"] = template["text"].format(
@@ -692,4 +697,4 @@ class Weekly(commands.Cog):
 async def setup(bot: commands.Bot):
     await bot.add_cog(
         Weekly(bot)
-)
+                )
