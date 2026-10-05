@@ -1,4 +1,4 @@
-"""Magic Cabinet rewards command."""
+"""Magic Cabinet reward center."""
 
 import random
 import sqlite3
@@ -9,13 +9,9 @@ from discord.ext import commands
 
 from magic_cabinet.data.epic import CARDS as EPIC_CARDS
 
-
 DATABASE = "cabinet.db"
-
 EMBED_COLOR = discord.Color.from_str("#4E0017")
-
 GLIMMER_EMOTE = "<:glimmer:1554842064464773172>"
-
 WEEKLY_GRAND_GLIMMERS = 25_000
 
 
@@ -40,7 +36,8 @@ def get_pending_rewards(user_id: int):
             SELECT
                 reward_id,
                 reward_type,
-                amount
+                amount,
+                task_id
             FROM weekly_pending_rewards
             WHERE user_id = ?
             AND claimed = 0
@@ -61,16 +58,10 @@ def get_blind_box_count(user_id: int) -> int:
             (user_id,),
         ).fetchone()
 
-    if row is None:
-        return 0
-
-    return row[0]
+    return row[0] if row else 0
 
 
-def add_blind_boxes(
-    user_id: int,
-    quantity: int = 1,
-):
+def add_blind_boxes(user_id: int, amount: int):
     with sqlite3.connect(DATABASE) as connection:
         connection.execute(
             """
@@ -81,12 +72,11 @@ def add_blind_boxes(
             VALUES (?, ?)
             ON CONFLICT(user_id)
             DO UPDATE SET
-                quantity =
-                    quantity + excluded.quantity
+                quantity = quantity + excluded.quantity
             """,
             (
                 user_id,
-                quantity,
+                amount,
             ),
         )
 
@@ -111,10 +101,7 @@ def get_bag_quantity(
             ),
         ).fetchone()
 
-    if row is None:
-        return 0
-
-    return row[0]
+    return row[0] if row else 0
 
 
 def add_to_bag(
@@ -150,33 +137,63 @@ def add_to_bag(
                     card_id,
                 ),
             )
-        else:
-            connection.execute(
-                """
-                UPDATE bag
-                SET quantity = ?
-                WHERE user_id = ?
-                AND card_id = ?
-                """,
-                (
-                    row[0] + 1,
-                    user_id,
-                    card_id,
-                ),
+
+            connection.commit()
+            return 1, True
+
+        quantity = row[0] + 1
+
+        connection.execute(
+            """
+            UPDATE bag
+            SET quantity = ?
+            WHERE user_id = ?
+            AND card_id = ?
+            """,
+            (
+                quantity,
+                user_id,
+                card_id,
+            ),
+        )
+
+        connection.commit()
+        return quantity, False
+
+
+def add_glimmers(
+    user_id: int,
+    amount: int,
+):
+    with sqlite3.connect(DATABASE) as connection:
+        connection.execute(
+            """
+            INSERT INTO balances (
+                user_id,
+                glimmers
             )
+            VALUES (?, ?)
+            ON CONFLICT(user_id)
+            DO UPDATE SET
+                glimmers = glimmers + excluded.glimmers
+            """,
+            (
+                user_id,
+                amount,
+            ),
+        )
 
         connection.commit()
 
 
 def choose_new_epic(user_id: int):
-    available = [
-        card
-        for card in EPIC_CARDS
-        if get_bag_quantity(
-            user_id,
-            card["id"],
-        ) == 0
-    ]
+    available = []
+
+    for card in EPIC_CARDS:
+        card_id = int(card["id"])
+
+        if get_bag_quantity(user_id, card_id) == 0:
+            available.append(card)
 
     if not available:
         return None
@@ -185,59 +202,58 @@ def choose_new_epic(user_id: int):
 
 
 def claim_rewards(user_id: int):
-    rewards = get_pending_rewards(user_id)
+    pending = get_pending_rewards(user_id)
 
-    if not rewards:
+    if not pending:
         return None
 
-    task_glimmers = sum(
-        reward[2]
-        for reward in rewards
-        if reward[1] == "task_glimmers"
-    )
+    task_glimmers = 0
+    has_grand = False
 
-    has_grand_reward = any(
-        reward[1] == "weekly_grand"
-        for reward in rewards
-    )
+    for _, reward_type, amount, _ in pending:
+        if reward_type == "task_glimmers":
+            task_glimmers += amount
 
-    new_epic = None
+        elif reward_type == "weekly_grand":
+            has_grand = True
 
-    if has_grand_reward:
-        new_epic = choose_new_epic(user_id)
+    epic_card = None
+
+    if has_grand:
+        epic_card = choose_new_epic(user_id)
 
     total_glimmers = task_glimmers
 
-    if has_grand_reward:
+    if has_grand:
         total_glimmers += WEEKLY_GRAND_GLIMMERS
 
+    if total_glimmers:
+        add_glimmers(
+            user_id,
+            total_glimmers,
+        )
+
+    if epic_card is not None:
+        add_to_bag(
+            user_id,
+            int(epic_card["id"]),
+        )
+
+    if has_grand:
+        add_blind_boxes(
+            user_id,
+            1,
+        )
+
+    reward_ids = [
+        row[0]
+        for row in pending
+    ]
+
     with sqlite3.connect(DATABASE) as connection:
-        if total_glimmers > 0:
-            connection.execute(
-                """
-                INSERT INTO balances (
-                    user_id,
-                    glimmers
-                )
-                VALUES (?, ?)
-                ON CONFLICT(user_id)
-                DO UPDATE SET
-                    glimmers =
-                        glimmers + excluded.glimmers
-                """,
-                (
-                    user_id,
-                    total_glimmers,
-                ),
-            )
-
-        reward_ids = [
-            reward[0]
-            for reward in rewards
-        ]
-
         placeholders = ",".join(
-            "?" for _ in reward_ids
+            "?"
+            for _ in reward_ids
         )
 
         connection.execute(
@@ -251,69 +267,83 @@ def claim_rewards(user_id: int):
 
         connection.commit()
 
-    if new_epic is not None:
-        add_to_bag(
-            user_id,
-            new_epic["id"],
-        )
-
-    if has_grand_reward:
-        add_blind_boxes(
-            user_id,
-            1,
-        )
-
     return {
         "task_glimmers": task_glimmers,
-        "grand_reward": has_grand_reward,
+        "grand_glimmers": (
+            WEEKLY_GRAND_GLIMMERS
+            if has_grand
+            else 0
+        ),
         "total_glimmers": total_glimmers,
-        "new_epic": new_epic,
-        "blind_boxes": 1 if has_grand_reward else 0,
+        "epic": epic_card,
+        "blind_boxes": 1 if has_grand else 0,
     }
 
 
-def build_reward_text(result):
-    lines = []
+def build_reward_embed(
+    user: discord.User | discord.Member,
+    pending,
+):
+    task_total = sum(
+        row[2]
+        for row in pending
+        if row[1] == "task_glimmers"
+    )
 
-    if result["task_glimmers"] > 0:
+    has_grand = any(
+        row[1] == "weekly_grand"
+        for row in pending
+    )
+
+    lines = [
+        f"**{user.mention}**",
+        "",
+        "✦ ───── ⋆⋅☆⋅⋆ ───── ✦",
+        "",
+        "**REWARDS WAITING**",
+        "",
+    ]
+
+    if task_total:
         lines.append(
-            f"+ **{result['task_glimmers']:,}** "
-            f"{GLIMMER_EMOTE} task rewards"
+            f"+ **{task_total:,}** {GLIMMER_EMOTE}"
         )
 
-    if result["grand_reward"]:
-        lines.append(
-            f"+ **{WEEKLY_GRAND_GLIMMERS:,}** "
-            f"{GLIMMER_EMOTE} weekly reward"
+    if has_grand:
+        lines.extend(
+            [
+                "",
+                "**Weekly Grand Reward**",
+                f"+ **{WEEKLY_GRAND_GLIMMERS:,}** "
+                f"{GLIMMER_EMOTE}",
+                "+ **1 NEW Epic card**",
+                "+ **1 Blind Box**",
+            ]
         )
 
-        if result["new_epic"] is not None:
-            epic = result["new_epic"]
+    lines.extend(
+        [
+            "",
+            "✦ ───── ⋆⋅☆⋅⋆ ───── ✦",
+            "",
+            "-# ✧ Claim everything waiting for you.",
+        ]
+    )
 
-            lines.append(
-                f"🃏 **New Epic Card**\n"
-                f"`{epic['id']}` • **{epic['name']}**"
-            )
-        else:
-            lines.append(
-                "🃏 **New Epic Card**\n"
-                "No new Epic card was available."
-            )
-
-        lines.append(
-            "📦 **1 Blind Box** added to your collection."
-        )
-
-    return "\n\n".join(lines)
+    return discord.Embed(
+        description="\n".join(lines),
+        color=EMBED_COLOR,
+    )
 
 
 class RewardsView(discord.ui.View):
     def __init__(self, user_id: int):
-        super().__init__(timeout=60)
+        super().__init__(timeout=120)
         self.user_id = user_id
 
     @discord.ui.button(
         label="Claim",
+        emoji="⬇️",
         style=discord.ButtonStyle.danger,
     )
     async def claim(
@@ -322,50 +352,82 @@ class RewardsView(discord.ui.View):
         button: discord.ui.Button,
     ):
         if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description="✦ These rewards belong to another player.",
+                    color=EMBED_COLOR,
+                ),
+                ephemeral=True,
+            )
             return
 
         result = claim_rewards(
-            self.user_id
+            interaction.user.id
         )
 
         if result is None:
-            embed = discord.Embed(
-                description=(
-                    "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
-                    "**No Rewards Waiting**\n\n"
-                    "You don't have any claimable "
-                    "rewards right now.\n\n"
-                    "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description="✦ You have no rewards waiting.",
+                    color=EMBED_COLOR,
                 ),
-                color=EMBED_COLOR,
-            )
-
-            await interaction.response.edit_message(
-                embed=embed,
-                view=None,
+                ephemeral=True,
             )
             return
 
-        embed = discord.Embed(
-            description=(
-                "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
-                "**REWARDS CLAIMED!** ✦\n\n"
-                f"{build_reward_text(result)}\n\n"
-                "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
-            ),
-            color=EMBED_COLOR,
+        lines = [
+            f"**{interaction.user.mention}**",
+            "",
+            "✦ ───── ⋆⋅☆⋅⋆ ───── ✦",
+            "",
+            "**REWARDS CLAIMED!** ✦",
+            "",
+        ]
+
+        if result["task_glimmers"]:
+            lines.append(
+                f"+ **{result['task_glimmers']:,}** "
+                f"{GLIMMER_EMOTE}"
+            )
+
+        if result["grand_glimmers"]:
+            lines.append(
+                f"+ **{result['grand_glimmers']:,}** "
+                f"{GLIMMER_EMOTE}"
+            )
+
+        if result["epic"]:
+            lines.append(
+                f"+ **{result['epic']['name']}** "
+                "`NEW Epic card`"
+            )
+
+        if result["blind_boxes"]:
+            lines.append(
+                "+ **1 Blind Box** 📦"
+            )
+
+        lines.extend(
+            [
+                "",
+                "✦ ───── ⋆⋅☆⋅⋆ ───── ✦",
+            ]
         )
 
+        button.disabled = True
+
         await interaction.response.edit_message(
-            embed=embed,
-            view=None,
+            embed=discord.Embed(
+                description="\n".join(lines),
+                color=EMBED_COLOR,
+            ),
+            view=self,
         )
 
 
 class Rewards(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        initialize_rewards_database()
 
     @app_commands.command(
         name="rewards",
@@ -375,80 +437,35 @@ class Rewards(commands.Cog):
         self,
         interaction: discord.Interaction,
     ):
-        rewards = get_pending_rewards(
+        pending = get_pending_rewards(
             interaction.user.id
         )
 
-        if not rewards:
-            embed = discord.Embed(
-                description=(
-                    "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
-                    "**No Rewards Waiting**\n\n"
-                    "You don't have any claimable "
-                    "rewards right now.\n\n"
-                    "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
-                ),
-                color=EMBED_COLOR,
-            )
-
+        if not pending:
             await interaction.response.send_message(
-                embed=embed,
+                embed=discord.Embed(
+                    description=(
+                        "✦ You have no rewards waiting right now."
+                    ),
+                    color=EMBED_COLOR,
+                ),
                 ephemeral=True,
             )
             return
 
-        task_glimmers = sum(
-            reward[2]
-            for reward in rewards
-            if reward[1] == "task_glimmers"
-        )
-
-        has_grand = any(
-            reward[1] == "weekly_grand"
-            for reward in rewards
-        )
-
-        description = (
-            "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
-            "**WAITING REWARDS**\n\n"
-        )
-
-        if task_glimmers:
-            description += (
-                f"{GLIMMER_EMOTE} "
-                f"**{task_glimmers:,}** Glimmers\n"
-            )
-
-        if has_grand:
-            description += (
-                f"{GLIMMER_EMOTE} "
-                f"**{WEEKLY_GRAND_GLIMMERS:,}** "
-                "Weekly Glimmers\n"
-                "🃏 **1 New Epic Card**\n"
-                "📦 **1 Blind Box**\n"
-            )
-
-        description += (
-            "\n-# ✧ Press the button below to claim "
-            "everything at once.\n\n"
-            "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
-        )
-
-        embed = discord.Embed(
-            description=description,
-            color=EMBED_COLOR,
-        )
-
         await interaction.response.send_message(
-            embed=embed,
+            embed=build_reward_embed(
+                interaction.user,
+                pending,
+            ),
             view=RewardsView(
                 interaction.user.id
             ),
-            ephemeral=True,
         )
 
 
 async def setup(bot: commands.Bot):
+    initialize_rewards_database()
     await bot.add_cog(
         Rewards(bot)
         )
