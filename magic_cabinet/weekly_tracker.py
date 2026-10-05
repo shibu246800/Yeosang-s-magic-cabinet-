@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from datetime import datetime, timezone
 
 DATABASE = "cabinet.db"
 
@@ -19,6 +20,46 @@ def initialize_tracker_database():
             )
             """
         )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS weekly_delivery (
+                user_id INTEGER PRIMARY KEY,
+                guild_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL
+            )
+            """
+        )
+
+        connection.commit()
+
+
+def save_weekly_channel(
+    user_id: int,
+    guild_id: int,
+    channel_id: int,
+):
+    with sqlite3.connect(DATABASE) as connection:
+        connection.execute(
+            """
+            INSERT INTO weekly_delivery (
+                user_id,
+                guild_id,
+                channel_id
+            )
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id)
+            DO UPDATE SET
+                guild_id = excluded.guild_id,
+                channel_id = excluded.channel_id
+            """,
+            (
+                user_id,
+                guild_id,
+                channel_id,
+            ),
+        )
+
         connection.commit()
 
 
@@ -96,8 +137,6 @@ def record_weekly_progress(
             )
 
             if just_completed:
-                from datetime import datetime, timezone
-
                 connection.execute(
                     """
                     INSERT INTO weekly_notifications (
@@ -114,6 +153,39 @@ def record_weekly_progress(
                         datetime.now(timezone.utc).isoformat(),
                     ),
                 )
+
+        connection.commit()
+
+
+def get_pending_notifications():
+    with sqlite3.connect(DATABASE) as connection:
+        return connection.execute(
+            """
+            SELECT
+                n.id,
+                n.user_id,
+                n.task_id,
+                d.guild_id,
+                d.channel_id
+            FROM weekly_notifications n
+            JOIN weekly_delivery d
+                ON d.user_id = n.user_id
+            WHERE n.sent = 0
+            ORDER BY n.id ASC
+            """
+        ).fetchall()
+
+
+def mark_notification_sent(notification_id: int):
+    with sqlite3.connect(DATABASE) as connection:
+        connection.execute(
+            """
+            UPDATE weekly_notifications
+            SET sent = 1
+            WHERE id = ?
+            """,
+            (notification_id,),
+        )
 
         connection.commit()
 
