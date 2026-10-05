@@ -40,7 +40,7 @@ WEEKLY_RESET_DAYS = 7
 
 EASY_TASKS = [
     {
-        "id": "collect_new_cards",
+        "id": "collect_new_cards_small",
         "text": "Collect {amount} new cards",
         "stat": "new_cards",
         "minimum": 5,
@@ -49,7 +49,16 @@ EASY_TASKS = [
         "reward_max": 6000,
     },
     {
-        "id": "earn_glimmers",
+        "id": "collect_new_cards_medium",
+        "text": "Collect {amount} new cards",
+        "stat": "new_cards",
+        "minimum": 8,
+        "maximum": 12,
+        "reward_min": 3500,
+        "reward_max": 6000,
+    },
+    {
+        "id": "earn_glimmers_small",
         "text": "Earn {amount:,} Glimmers",
         "stat": "glimmers_earned",
         "minimum": 5000,
@@ -58,12 +67,30 @@ EASY_TASKS = [
         "reward_max": 6000,
     },
     {
-        "id": "claim_drops",
+        "id": "earn_glimmers_medium",
+        "text": "Earn {amount:,} Glimmers",
+        "stat": "glimmers_earned",
+        "minimum": 8000,
+        "maximum": 12000,
+        "reward_min": 3500,
+        "reward_max": 6000,
+    },
+    {
+        "id": "claim_drops_small",
         "text": "Claim {amount} Drops",
         "stat": "drops_claimed",
         "minimum": 2,
         "maximum": 5,
         "reward_min": 3000,
+        "reward_max": 6000,
+    },
+    {
+        "id": "claim_drops_medium",
+        "text": "Claim {amount} Drops",
+        "stat": "drops_claimed",
+        "minimum": 3,
+        "maximum": 6,
+        "reward_min": 3500,
         "reward_max": 6000,
     },
 ]
@@ -218,15 +245,13 @@ def generate_tasks():
 
         template = random.choice(pool)
 
-        if template["id"] in {
-            task["base_id"]
+        if template["stat"] in {
+            task["stat"]
             for task in selected_tasks
         }:
             continue
 
         task = dict(template)
-
-        task["base_id"] = template["id"]
 
         task["amount"] = random.randint(
             template["minimum"],
@@ -244,11 +269,6 @@ def generate_tasks():
             else "medium"
             if template in MEDIUM_TASKS
             else "hard"
-        )
-
-        task["id"] = (
-            f"{task['difficulty']}_"
-            f"{template['id']}"
         )
 
         task["display"] = template["text"].format(
@@ -542,7 +562,6 @@ class Weekly(commands.Cog):
             if task_id == "__weekly_complete__":
                 embed = discord.Embed(
                     description=(
-                        f"<@{user_id}>\n\n"
                         "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
                         "**WEEKLY CHALLENGE COMPLETE!** ✦\n\n"
                         "**3 / 3 challenges completed** ✓\n\n"
@@ -697,4 +716,4 @@ class Weekly(commands.Cog):
 async def setup(bot: commands.Bot):
     await bot.add_cog(
         Weekly(bot)
-                )
+    )
