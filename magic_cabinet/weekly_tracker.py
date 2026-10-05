@@ -77,35 +77,6 @@ def save_weekly_channel(
         connection.commit()
 
 
-def add_weekly_reward(
-    user_id: int,
-    task_id: str,
-    amount: int,
-):
-    with sqlite3.connect(DATABASE) as connection:
-        connection.execute(
-            """
-            INSERT INTO weekly_pending_rewards (
-                user_id,
-                reward_type,
-                amount,
-                task_id,
-                claimed,
-                created_at
-            )
-            VALUES (?, 'task_glimmers', ?, ?, 0, ?)
-            """,
-            (
-                user_id,
-                amount,
-                task_id,
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-
-        connection.commit()
-
-
 def record_weekly_progress(
     user_id: int,
     stat: str,
@@ -136,6 +107,8 @@ def record_weekly_progress(
             """,
             (user_id,),
         ).fetchall()
+
+        newly_completed = False
 
         for task_id, current_progress, completed in rows:
             if completed:
@@ -180,6 +153,8 @@ def record_weekly_progress(
             )
 
             if just_completed:
+                newly_completed = True
+
                 connection.execute(
                     """
                     INSERT INTO weekly_notifications (
@@ -220,6 +195,57 @@ def record_weekly_progress(
                         user_id,
                         task["reward"],
                         task_id,
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+
+        # Check whether all three weekly challenges
+        # are now complete.
+        completed_count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM weekly_progress
+            WHERE user_id = ?
+            AND completed = 1
+            """,
+            (user_id,),
+        ).fetchone()[0]
+
+        if completed_count == 3:
+            already_queued = connection.execute(
+                """
+                SELECT 1
+                FROM weekly_pending_rewards
+                WHERE user_id = ?
+                AND reward_type = 'weekly_grand'
+                AND claimed = 0
+                LIMIT 1
+                """,
+                (user_id,),
+            ).fetchone()
+
+            if already_queued is None:
+                connection.execute(
+                    """
+                    INSERT INTO weekly_pending_rewards (
+                        user_id,
+                        reward_type,
+                        amount,
+                        task_id,
+                        claimed,
+                        created_at
+                    )
+                    VALUES (
+                        ?,
+                        'weekly_grand',
+                        0,
+                        NULL,
+                        0,
+                        ?
+                    )
+                    """,
+                    (
+                        user_id,
                         datetime.now(timezone.utc).isoformat(),
                     ),
                 )
