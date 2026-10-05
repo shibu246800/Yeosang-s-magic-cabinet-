@@ -9,6 +9,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+
 DATABASE = "cabinet.db"
 EMBED_COLOR = discord.Color.from_str("#4E0017")
 
@@ -103,6 +104,7 @@ class CollectionView(discord.ui.View):
         page: int = 0,
     ):
         super().__init__(timeout=180)
+
         self.cog = cog
         self.user = user
         self.vault = vault
@@ -113,6 +115,7 @@ class CollectionView(discord.ui.View):
     def _build_buttons(self) -> None:
         self.clear_items()
 
+        # Vault filters
         for vault_code, label in (
             ("ALL", "✦ All"),
             ("BB", "🌙 BB"),
@@ -128,27 +131,48 @@ class CollectionView(discord.ui.View):
                 ),
                 row=0,
             )
+
             button.callback = self._vault_callback(vault_code)
             self.add_item(button)
 
+        # Search
         search = discord.ui.Button(
             label="Search Collection",
             emoji="🔎",
             style=discord.ButtonStyle.secondary,
             row=1,
         )
+
         search.callback = self.search_callback
         self.add_item(search)
 
+        # One View button for each visible collection.
         collections = self.cog.filtered_collections(self.vault)
+
+        start = self.page * 3
+        visible = collections[start:start + 3]
+
+        for index, collection in enumerate(visible):
+            button = discord.ui.Button(
+                label=f"View {fancy_name(collection['name'])}",
+                emoji="📖",
+                style=discord.ButtonStyle.danger,
+                row=2,
+            )
+
+            button.callback = self._collection_callback(collection)
+            self.add_item(button)
+
+        # Pagination
         max_page = max(0, math.ceil(len(collections) / 3) - 1)
 
         previous = discord.ui.Button(
             label="《",
             style=discord.ButtonStyle.secondary,
             disabled=self.page <= 0,
-            row=2,
+            row=3,
         )
+
         previous.callback = self.previous_callback
         self.add_item(previous)
 
@@ -156,16 +180,18 @@ class CollectionView(discord.ui.View):
             label=f"{self.page + 1} / {max_page + 1}",
             style=discord.ButtonStyle.secondary,
             disabled=True,
-            row=2,
+            row=3,
         )
+
         self.add_item(indicator)
 
         next_button = discord.ui.Button(
             label="》",
             style=discord.ButtonStyle.secondary,
             disabled=self.page >= max_page,
-            row=2,
+            row=3,
         )
+
         next_button.callback = self.next_callback
         self.add_item(next_button)
 
@@ -186,7 +212,29 @@ class CollectionView(discord.ui.View):
 
         return callback
 
-    async def search_callback(self, interaction: discord.Interaction):
+    def _collection_callback(self, collection: dict):
+        async def callback(interaction: discord.Interaction):
+            if interaction.user.id != self.user.id:
+                await interaction.response.send_message(
+                    "This collection menu belongs to someone else.",
+                    ephemeral=True,
+                )
+                return
+
+            await interaction.response.send_message(
+                embeds=self.cog.build_inside_collection(
+                    collection,
+                    interaction.user,
+                ),
+                ephemeral=True,
+            )
+
+        return callback
+
+    async def search_callback(
+        self,
+        interaction: discord.Interaction,
+    ):
         if interaction.user.id != self.user.id:
             await interaction.response.send_message(
                 "This collection menu belongs to someone else.",
@@ -195,21 +243,55 @@ class CollectionView(discord.ui.View):
             return
 
         await interaction.response.send_modal(
-            CollectionSearchModal(self.cog, self)
+            CollectionSearchModal(
+                self.cog,
+                self,
+            )
         )
 
-    async def previous_callback(self, interaction: discord.Interaction):
+    async def previous_callback(
+        self,
+        interaction: discord.Interaction,
+    ):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message(
+                "This collection menu belongs to someone else.",
+                ephemeral=True,
+            )
+            return
+
         self.page -= 1
         self._build_buttons()
-        await self.cog.refresh_browser(interaction, self)
 
-    async def next_callback(self, interaction: discord.Interaction):
+        await self.cog.refresh_browser(
+            interaction,
+            self,
+        )
+
+    async def next_callback(
+        self,
+        interaction: discord.Interaction,
+    ):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message(
+                "This collection menu belongs to someone else.",
+                ephemeral=True,
+            )
+            return
+
         self.page += 1
         self._build_buttons()
-        await self.cog.refresh_browser(interaction, self)
+
+        await self.cog.refresh_browser(
+            interaction,
+            self,
+        )
 
 
-class CollectionSearchModal(discord.ui.Modal, title="Search Collection"):
+class CollectionSearchModal(
+    discord.ui.Modal,
+    title="Search Collection",
+):
     search = discord.ui.TextInput(
         label="Collection ID or name",
         placeholder="Example: BB_1 or Royal Court",
@@ -217,12 +299,20 @@ class CollectionSearchModal(discord.ui.Modal, title="Search Collection"):
         max_length=100,
     )
 
-    def __init__(self, cog: "Collection", view: CollectionView):
+    def __init__(
+        self,
+        cog: "Collection",
+        view: CollectionView,
+    ):
         super().__init__()
+
         self.cog = cog
         self.collection_view = view
 
-    async def on_submit(self, interaction: discord.Interaction):
+    async def on_submit(
+        self,
+        interaction: discord.Interaction,
+    ):
         query = self.search.value.strip().lower()
 
         matches = [
@@ -230,8 +320,10 @@ class CollectionSearchModal(discord.ui.Modal, title="Search Collection"):
             for collection in self.cog.filtered_collections(
                 self.collection_view.vault
             )
-            if query in collection["id"].lower()
-            or query in collection["name"].lower()
+            if (
+                query in collection["id"].lower()
+                or query in collection["name"].lower()
+            )
         ]
 
         if not matches:
@@ -244,85 +336,27 @@ class CollectionSearchModal(discord.ui.Modal, title="Search Collection"):
         collection = matches[0]
 
         await interaction.response.send_message(
-            embed=self.cog.build_collection_embed(
-                collection,
-                interaction.user,
-            ),
-            view=CollectionOpenView(
-                self.cog,
-                interaction.user,
-                collection,
-            ),
-            ephemeral=True,
-        )
-
-
-class CollectionOpenView(discord.ui.View):
-    def __init__(
-        self,
-        cog: "Collection",
-        user: discord.User | discord.Member,
-        collection: dict,
-    ):
-        super().__init__(timeout=180)
-        self.cog = cog
-        self.user = user
-        self.collection = collection
-
-    @discord.ui.button(
-        label="View Collection",
-        emoji="📖",
-        style=discord.ButtonStyle.danger,
-    )
-    async def view_collection(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ):
-        if interaction.user.id != self.user.id:
-            await interaction.response.send_message(
-                "This collection menu belongs to someone else.",
-                ephemeral=True,
-            )
-            return
-
-        await interaction.response.send_message(
             embeds=self.cog.build_inside_collection(
-                self.collection,
+                collection,
                 interaction.user,
             ),
             ephemeral=True,
         )
-
-    @discord.ui.button(
-        label="Back",
-        emoji="↩️",
-        style=discord.ButtonStyle.secondary,
-    )
-    async def back(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ):
-        if interaction.user.id != self.user.id:
-            await interaction.response.send_message(
-                "This collection menu belongs to someone else.",
-                ephemeral=True,
-            )
-            return
-
-        view = CollectionView(self.cog, self.user)
-        await self.cog.send_browser(interaction, view)
 
 
 class Collection(commands.Cog):
     """Collection browser."""
 
-    def __init__(self, bot: commands.Bot):
+    def __init__(
+        self,
+        bot: commands.Bot,
+    ):
         self.bot = bot
 
     @staticmethod
-    def filtered_collections(vault: str) -> list[dict]:
+    def filtered_collections(
+        vault: str,
+    ) -> list[dict]:
         if vault == "ALL":
             return COLLECTIONS
 
@@ -332,34 +366,50 @@ class Collection(commands.Cog):
             if collection["vault"] == vault
         ]
 
-    def build_collection_embed(
+    def build_browser_embed(
         self,
-        collection: dict,
         user: discord.User | discord.Member,
+        view: CollectionView,
     ) -> discord.Embed:
-        collected_ids = get_collected_ids(user.id)
+        collections = self.filtered_collections(view.vault)
 
-        # Royal Court uses cards 1-7.
-        owned = sum(
-            1
-            for card_id in range(1, collection["total_cards"] + 1)
-            if card_id in collected_ids
-        )
+        start = view.page * 3
+        visible = collections[start:start + 3]
 
         embed = discord.Embed(
             color=EMBED_COLOR,
-            description=(
-                f"### {fancy_name(collection['name'])}\n"
-                f"**{collection['id']}**\n"
-                f"{VAULT_NAMES[collection['vault']]}\n\n"
-                f"**Progress:** {owned}/{collection['total_cards']}"
-            ),
+            title="𝑪𝒐𝒍𝒍𝒆𝒄𝒕𝒊𝒐𝒏𝒔",
         )
+
+        if not visible:
+            embed.description = "No collections are available yet."
+            return embed
+
+        # Discord embeds can display one large collection image.
+        # The View buttons below correspond to the visible collections.
+        collection = visible[0]
 
         embed.set_image(url=collection["cover"])
 
+        embed.description = (
+            f"**{fancy_name(collection['name'])}**\n"
+            f"`{collection['id']}` • "
+            f"{VAULT_NAMES[collection['vault']]}"
+        )
+
+        if len(visible) > 1:
+            for collection in visible[1:]:
+                embed.add_field(
+                    name=fancy_name(collection["name"]),
+                    value=(
+                        f"`{collection['id']}` • "
+                        f"{VAULT_NAMES[collection['vault']]}"
+                    ),
+                    inline=False,
+                )
+
         embed.set_footer(
-            text=f"{collection['id']} • {collection['name']}"
+            text="Select a collection to open its card board."
         )
 
         return embed
@@ -373,11 +423,17 @@ class Collection(commands.Cog):
 
         owned = sum(
             1
-            for card_id in range(1, collection["total_cards"] + 1)
+            for card_id in range(
+                1,
+                collection["total_cards"] + 1,
+            )
             if card_id in collected_ids
         )
 
-        header = discord.Embed(color=EMBED_COLOR)
+        header = discord.Embed(
+            color=EMBED_COLOR,
+        )
+
         header.set_image(url=HEADER_URL)
 
         embed = discord.Embed(
@@ -396,48 +452,20 @@ class Collection(commands.Cog):
             text=f"{collection['id']} • {collection['name']}"
         )
 
-        return [header, embed]
-
-    def build_browser_embed(
-        self,
-        user: discord.User | discord.Member,
-        view: CollectionView,
-    ) -> discord.Embed:
-        collections = self.filtered_collections(view.vault)
-
-        start = view.page * 3
-        visible = collections[start:start + 3]
-
-        lines = []
-
-        for index, collection in enumerate(visible, start=1):
-            lines.append(
-                f"**{fancy_name(collection['name'])}**\n"
-                f"`{collection['id']}` • "
-                f"{VAULT_NAMES[collection['vault']]}"
-            )
-
-        if not lines:
-            lines.append("No collections are available yet.")
-
-        embed = discord.Embed(
-            color=EMBED_COLOR,
-            title="𝑪𝒐𝒍𝒍𝒆𝒄𝒕𝒊𝒐𝒏𝒔",
-            description="\n\n".join(lines),
-        )
-
-        embed.set_footer(
-            text="Choose a collection to view its cards."
-        )
-
-        return embed
+        return [
+            header,
+            embed,
+        ]
 
     async def send_browser(
         self,
         interaction: discord.Interaction,
         view: CollectionView,
     ):
-        header = discord.Embed(color=EMBED_COLOR)
+        header = discord.Embed(
+            color=EMBED_COLOR,
+        )
+
         header.set_image(url=HEADER_URL)
 
         content = self.build_browser_embed(
@@ -446,7 +474,10 @@ class Collection(commands.Cog):
         )
 
         await interaction.response.send_message(
-            embeds=[header, content],
+            embeds=[
+                header,
+                content,
+            ],
             view=view,
         )
 
@@ -455,7 +486,10 @@ class Collection(commands.Cog):
         interaction: discord.Interaction,
         view: CollectionView,
     ):
-        header = discord.Embed(color=EMBED_COLOR)
+        header = discord.Embed(
+            color=EMBED_COLOR,
+        )
+
         header.set_image(url=HEADER_URL)
 
         content = self.build_browser_embed(
@@ -464,7 +498,10 @@ class Collection(commands.Cog):
         )
 
         await interaction.response.edit_message(
-            embeds=[header, content],
+            embeds=[
+                header,
+                content,
+            ],
             view=view,
         )
 
@@ -488,4 +525,6 @@ class Collection(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(Collection(bot))
+    await bot.add_cog(
+        Collection(bot)
+            )
