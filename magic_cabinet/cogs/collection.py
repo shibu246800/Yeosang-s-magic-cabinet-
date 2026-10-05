@@ -56,11 +56,9 @@ async def make_books() -> discord.File:
     async with aiohttp.ClientSession() as session:
         source = await download_cover(session)
 
-    # Small books
     book_width = 105
     book_height = 150
 
-    # Large breathing space
     horizontal_gap = 110
     vertical_gap = 55
 
@@ -141,33 +139,32 @@ class CollectionView(discord.ui.LayoutView):
             )
         )
 
-        # Buttons
-        buttons = discord.ui.ActionRow()
+        # Three separate rows, three buttons each
+        for row_start in range(0, len(COLLECTIONS), 3):
+            buttons = discord.ui.ActionRow()
 
-        for index, (name, collection_id) in enumerate(
-            COLLECTIONS
-        ):
-            button = discord.ui.Button(
-                emoji=RED_DOT,
-                style=discord.ButtonStyle.secondary,
-                row=index // 3,
-            )
-
-            async def callback(
-                interaction: discord.Interaction,
-                name=name,
-                collection_id=collection_id,
-            ):
-                await interaction.response.send_message(
-                    f"**{name}**\n`{collection_id}`",
-                    ephemeral=True,
+            for name, collection_id in COLLECTIONS[
+                row_start:row_start + 3
+            ]:
+                button = discord.ui.Button(
+                    emoji=RED_DOT,
+                    style=discord.ButtonStyle.secondary,
                 )
 
-            button.callback = callback
+                async def callback(
+                    interaction: discord.Interaction,
+                    name=name,
+                    collection_id=collection_id,
+                ):
+                    await interaction.response.send_message(
+                        f"**{name}**\n`{collection_id}`",
+                        ephemeral=True,
+                    )
 
-            buttons.add_item(button)
+                button.callback = callback
+                buttons.add_item(button)
 
-        container.add_item(buttons)
+            container.add_item(buttons)
 
         self.add_item(container)
 
