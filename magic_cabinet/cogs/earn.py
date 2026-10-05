@@ -159,9 +159,6 @@ class Earn(commands.Cog):
         if not is_registered(user_id):
             embed = discord.Embed(
                 description=(
-                    "╭────────────── ✦ ──────────────╮\n"
-                    "              **MAGIC CABINET**\n"
-                    "╰────────────── ✦ ──────────────╯\n\n"
                     "You haven't awakened your Cabinet yet.\n\n"
                     "-# ✦ Use `/magic awaken` to begin."
                 ),
@@ -205,9 +202,6 @@ class Earn(commands.Cog):
 
                 embed = discord.Embed(
                     description=(
-                        "╭────────────── ✦ ──────────────╮\n"
-                        "              **GLIMMERS**\n"
-                        "╰────────────── ✦ ──────────────╯\n\n"
                         "Your purse is still resting. ✦\n\n"
                         f"-# Come back in **{cooldown_text}** "
                         "to `/earn` again."
@@ -247,9 +241,7 @@ class Earn(commands.Cog):
         embed = discord.Embed(
             description=(
                 "╭────────────── ✦ ──────────────╮\n"
-                "                **GLIMMERS**\n"
-                "╰────────────── ✦ ──────────────╯\n\n"
-                f"You earned **{earning_amount}** "
+                 f"You earned **{earning_amount}** "
                 f"{GLIMMER_EMOTE} Glimmers!\n\n"
                 f"**New balance:** {new_balance:,} "
                 f"{GLIMMER_EMOTE}\n\n"
