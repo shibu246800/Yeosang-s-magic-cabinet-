@@ -52,57 +52,20 @@ async def download_cover(
     return Image.open(BytesIO(data)).convert("RGBA")
 
 
-async def make_books() -> discord.File:
-    async with aiohttp.ClientSession() as session:
-        source = await download_cover(session)
+async def make_book(
+    source: Image.Image,
+) -> discord.File:
+    book_width = 140
+    book_height = 190
 
-    book_width = 105
-    book_height = 150
-
-    horizontal_gap = 110
-    vertical_gap = 55
-
-    total_width = (
-        book_width * 3
-        + horizontal_gap * 2
+    image = ImageOps.contain(
+        source,
+        (book_width, book_height),
     )
-
-    total_height = (
-        book_height * 3
-        + vertical_gap * 2
-    )
-
-    canvas = Image.new(
-        "RGBA",
-        (total_width, total_height),
-        (0, 0, 0, 0),
-    )
-
-    for index in range(9):
-        image = ImageOps.contain(
-            source,
-            (book_width, book_height),
-        )
-
-        row = index // 3
-        column = index % 3
-
-        x = column * (
-            book_width + horizontal_gap
-        )
-
-        y = row * (
-            book_height + vertical_gap
-        )
-
-        canvas.alpha_composite(
-            image,
-            (x, y),
-        )
 
     buffer = BytesIO()
 
-    canvas.save(
+    image.save(
         buffer,
         format="PNG",
     )
@@ -111,7 +74,7 @@ async def make_books() -> discord.File:
 
     return discord.File(
         buffer,
-        filename="collection_books.png",
+        filename="collection_book.png",
     )
 
 
@@ -121,7 +84,6 @@ class CollectionView(discord.ui.LayoutView):
 
         container = discord.ui.Container()
 
-        # Header
         container.add_item(
             discord.ui.MediaGallery(
                 discord.MediaGalleryItem(
@@ -130,41 +92,33 @@ class CollectionView(discord.ui.LayoutView):
             )
         )
 
-        # Collection books
-        container.add_item(
-            discord.ui.MediaGallery(
-                discord.MediaGalleryItem(
-                    "attachment://collection_books.png",
+        for name, collection_id in COLLECTIONS:
+            section = discord.ui.Section(
+                discord.ui.TextDisplay(
+                    f"### 𝑹𝒐𝒚𝒂𝒍 𝑪𝒐𝒖𝒓𝒕\n"
+                    f"`{collection_id}`"
                 ),
-            )
-        )
-
-        # Three separate rows, three buttons each
-        for row_start in range(0, len(COLLECTIONS), 3):
-            buttons = discord.ui.ActionRow()
-
-            for name, collection_id in COLLECTIONS[
-                row_start:row_start + 3
-            ]:
-                button = discord.ui.Button(
+                accessory=discord.ui.Button(
                     emoji=RED_DOT,
                     style=discord.ButtonStyle.secondary,
+                ),
+            )
+
+            button = section.accessory
+
+            async def callback(
+                interaction: discord.Interaction,
+                name=name,
+                collection_id=collection_id,
+            ):
+                await interaction.response.send_message(
+                    f"**{name}**\n`{collection_id}`",
+                    ephemeral=True,
                 )
 
-                async def callback(
-                    interaction: discord.Interaction,
-                    name=name,
-                    collection_id=collection_id,
-                ):
-                    await interaction.response.send_message(
-                        f"**{name}**\n`{collection_id}`",
-                        ephemeral=True,
-                    )
+            button.callback = callback
 
-                button.callback = callback
-                buttons.add_item(button)
-
-            container.add_item(buttons)
+            container.add_item(section)
 
         self.add_item(container)
 
@@ -181,15 +135,9 @@ class Collection(commands.Cog):
         self,
         interaction: discord.Interaction,
     ):
-        await interaction.response.defer()
-
-        file = await make_books()
-
-        view = CollectionView()
-
-        await interaction.followup.send(
-            file=file,
-            view=view,
+        await interaction.response.send_message(
+            "Collection browser is being prepared.",
+            ephemeral=True,
         )
 
 
