@@ -108,8 +108,6 @@ def record_weekly_progress(
             (user_id,),
         ).fetchall()
 
-        newly_completed = False
-
         for task_id, current_progress, completed in rows:
             if completed:
                 continue
@@ -153,8 +151,6 @@ def record_weekly_progress(
             )
 
             if just_completed:
-                newly_completed = True
-
                 connection.execute(
                     """
                     INSERT INTO weekly_notifications (
@@ -246,6 +242,25 @@ def record_weekly_progress(
                     """,
                     (
                         user_id,
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+
+                # Special notification for completing
+                # the entire weekly challenge.
+                connection.execute(
+                    """
+                    INSERT INTO weekly_notifications (
+                        user_id,
+                        task_id,
+                        created_at,
+                        sent
+                    )
+                    VALUES (?, ?, ?, 0)
+                    """,
+                    (
+                        user_id,
+                        "__weekly_complete__",
                         datetime.now(timezone.utc).isoformat(),
                     ),
                 )
