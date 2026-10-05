@@ -13,22 +13,24 @@ from magic_cabinet.data.rare import CARDS as RARE_CARDS
 
 
 DATABASE = "cabinet.db"
+
 EMBED_COLOR = discord.Color.from_str("#4E0017")
 
 HEADER_URL = (
-    "https://raw.githubusercontent.com/shibu246800/"
-    "Yeosang-s-magic-cabinet-/refs/heads/main/"
-    "magic_cabinet/cogs/profile/Untitled13.jpg"
+    "https://raw.githubusercontent.com/"
+    "shibu246800/Yeosang-s-magic-cabinet-/"
+    "refs/heads/main/magic_cabinet/cogs/profile/"
+    "Untitled13.jpg"
 )
 
-FOOTER_URL = (
-    "https://raw.githubusercontent.com/shibu246800/"
-    "Yeosang-s-magic-cabinet-/refs/heads/main/"
-    "magic_cabinet/cogs/profile/Untitled14_20261003173415.jpg"
+DIVIDER_URL = (
+    "https://raw.githubusercontent.com/"
+    "shibu246800/Yeosang-s-magic-cabinet-/"
+    "refs/heads/main/magic_cabinet/cogs/profile/"
+    "Untitled14_20261003173415.jpg"
 )
 
 CARDS_PER_PAGE = 12
-
 
 ALL_CARDS = (
     NORMAL_CARDS
@@ -36,7 +38,6 @@ ALL_CARDS = (
     + EPIC_CARDS
     + LIMITED_CARDS
 )
-
 
 RARITY_ORDER = {
     "★": 1,
@@ -46,390 +47,11 @@ RARITY_ORDER = {
 }
 
 
-def make_header_embed() -> discord.Embed:
-    embed = discord.Embed(
-        color=EMBED_COLOR,
-    )
-
-    embed.set_image(
-        url=HEADER_URL
-    )
-
-    return embed
-
-
-def make_footer_embed() -> discord.Embed:
-    embed = discord.Embed(
-        color=EMBED_COLOR,
-    )
-
-    embed.set_image(
-        url=FOOTER_URL
-    )
-
-    return embed
-
-
-class BagView(discord.ui.View):
-    def __init__(
-        self,
-        user_id: int,
-        cards: list[dict],
-        filter_name: str = "all",
-    ):
-        super().__init__(timeout=300)
-
-        self.user_id = user_id
-        self.cards = cards
-        self.filter_name = filter_name
-        self.page = 0
-        self.message_id: int | None = None
-
-        self.update_buttons()
-
-    def update_buttons(self):
-        total_pages = max(
-            1,
-            (len(self.cards) + CARDS_PER_PAGE - 1)
-            // CARDS_PER_PAGE,
-        )
-
-        self.previous.disabled = self.page <= 0
-        self.next.disabled = self.page >= total_pages - 1
-
-    def get_page_cards(self) -> list[dict]:
-        start = self.page * CARDS_PER_PAGE
-        end = start + CARDS_PER_PAGE
-
-        return self.cards[start:end]
-
-    def build_embed(
-        self,
-        user: discord.User | discord.Member,
-    ) -> discord.Embed:
-        page_cards = self.get_page_cards()
-
-        lines = [
-            f"**{user.mention}'s BAG**",
-            "",
-        ]
-
-        current_rarity = None
-
-        for card in page_cards:
-            rarity = card["stars"]
-
-            if rarity != current_rarity:
-                if current_rarity is not None:
-                    lines.append("")
-
-                lines.append(
-                    f"**{rarity}**"
-                )
-
-                current_rarity = rarity
-
-            lines.append(
-                f"`[{card['id']}]` "
-                f"[View]({card['image']}) "
-                f"{card['vault']} × **{card['quantity']}**"
-            )
-
-        if not page_cards:
-            lines.append(
-                "✦ Your Bag is empty."
-            )
-
-        total_pages = max(
-            1,
-            (len(self.cards) + CARDS_PER_PAGE - 1)
-            // CARDS_PER_PAGE,
-        )
-
-        lines.extend(
-            [
-                "",
-                f"-# Page {self.page + 1}/{total_pages}",
-            ]
-        )
-
-        return discord.Embed(
-            description="\n".join(lines),
-            color=EMBED_COLOR,
-        )
-
-    async def check_user(
-        self,
-        interaction: discord.Interaction,
-    ) -> bool:
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                "✦ This Bag belongs to another player.",
-                ephemeral=True,
-            )
-            return False
-
-        return True
-
-    async def update_main_message(
-        self,
-        interaction: discord.Interaction,
-    ):
-        if self.message_id is None:
-            return
-
-        await interaction.followup.edit_message(
-            self.message_id,
-            embed=self.build_embed(
-                interaction.user
-            ),
-            view=self,
-        )
-
-    @discord.ui.button(
-        label="《",
-        style=discord.ButtonStyle.secondary,
-    )
-    async def previous(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ):
-        if not await self.check_user(interaction):
-            return
-
-        if self.page > 0:
-            self.page -= 1
-
-        self.update_buttons()
-
-        await interaction.response.edit_message(
-            embed=self.build_embed(
-                interaction.user
-            ),
-            view=self,
-        )
-
-    @discord.ui.button(
-        label="》",
-        style=discord.ButtonStyle.secondary,
-    )
-    async def next(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ):
-        if not await self.check_user(interaction):
-            return
-
-        total_pages = max(
-            1,
-            (len(self.cards) + CARDS_PER_PAGE - 1)
-            // CARDS_PER_PAGE,
-        )
-
-        if self.page < total_pages - 1:
-            self.page += 1
-
-        self.update_buttons()
-
-        await interaction.response.edit_message(
-            embed=self.build_embed(
-                interaction.user
-            ),
-            view=self,
-        )
-
-    @discord.ui.button(
-        label="Sort",
-        style=discord.ButtonStyle.danger,
-    )
-    async def sort_button(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ):
-        if not await self.check_user(interaction):
-            return
-
-        await interaction.response.send_message(
-            embed=discord.Embed(
-                description=(
-                    "✦ Choose how you want "
-                    "to sort your Bag."
-                ),
-                color=EMBED_COLOR,
-            ),
-            view=SortView(
-                self,
-                interaction.user.id,
-            ),
-            ephemeral=True,
-        )
-
-    @discord.ui.button(
-        label="Search",
-        style=discord.ButtonStyle.danger,
-    )
-    async def search_button(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ):
-        if not await self.check_user(interaction):
-            return
-
-        await interaction.response.send_modal(
-            BagSearchModal(
-                self,
-                interaction.user.id,
-            )
-        )
-
-
-class SortSelect(discord.ui.Select):
-    def __init__(
-        self,
-        parent_view: BagView,
-        user_id: int,
-    ):
-        self.parent_view = parent_view
-        self.user_id = user_id
-
-        options = [
-            discord.SelectOption(
-                label="Normal",
-                value="normal",
-                description="Show Normal cards.",
-            ),
-            discord.SelectOption(
-                label="Rare",
-                value="rare",
-                description="Show Rare cards.",
-            ),
-            discord.SelectOption(
-                label="Epic",
-                value="epic",
-                description="Show Epic cards.",
-            ),
-            discord.SelectOption(
-                label="Limited",
-                value="limited",
-                description="Show Limited cards.",
-            ),
-            discord.SelectOption(
-                label="3+ Duplicates",
-                value="duplicates",
-                description=(
-                    "Show cards you own "
-                    "3 or more times."
-                ),
-            ),
-        ]
-
-        super().__init__(
-            placeholder="Choose a filter...",
-            options=options,
-        )
-
-    async def callback(
-        self,
-        interaction: discord.Interaction,
-    ):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                "✦ This Bag belongs to another player.",
-                ephemeral=True,
-            )
-            return
-
-        self.parent_view.cards = get_bag_cards(
-            self.user_id,
-            self.values[0],
-        )
-
-        self.parent_view.page = 0
-        self.parent_view.filter_name = self.values[0]
-        self.parent_view.update_buttons()
-
-        await interaction.response.send_message(
-            "✦ Bag updated.",
-            ephemeral=True,
-        )
-
-        await self.parent_view.update_main_message(
-            interaction
-        )
-
-
-class SortView(discord.ui.View):
-    def __init__(
-        self,
-        parent_view: BagView,
-        user_id: int,
-    ):
-        super().__init__(timeout=60)
-
-        self.add_item(
-            SortSelect(
-                parent_view,
-                user_id,
-            )
-        )
-
-
-class BagSearchModal(discord.ui.Modal):
-    def __init__(
-        self,
-        parent_view: BagView,
-        user_id: int,
-    ):
-        super().__init__(
-            title="Search Bag"
-        )
-
-        self.parent_view = parent_view
-        self.user_id = user_id
-
-        self.search = discord.ui.TextInput(
-            label="Card ID or Collection ID",
-            placeholder="Example: 42 or BB_1",
-            required=True,
-            max_length=50,
-        )
-
-        self.add_item(
-            self.search
-        )
-
-    async def on_submit(
-        self,
-        interaction: discord.Interaction,
-    ):
-        query = self.search.value.strip()
-
-        self.parent_view.cards = search_bag_cards(
-            self.user_id,
-            query,
-        )
-
-        self.parent_view.page = 0
-        self.parent_view.filter_name = "search"
-        self.parent_view.update_buttons()
-
-        await interaction.response.send_message(
-            "✦ Bag updated.",
-            ephemeral=True,
-        )
-
-        await self.parent_view.update_main_message(
-            interaction
-        )
-
-
 def get_card_vault(
     collection_id: str,
 ) -> str:
+    """Return BB, GG, or BG from a Collection ID."""
+
     return collection_id.split(
         "_",
         1,
@@ -440,9 +62,10 @@ def get_bag_cards(
     user_id: int,
     filter_name: str = "all",
 ) -> list[dict]:
-    with sqlite3.connect(
-        DATABASE
-    ) as connection:
+    """Return the player's non-Legendary Bag cards."""
+
+    with sqlite3.connect(DATABASE) as connection:
+
         rows = connection.execute(
             """
             SELECT card_id, quantity
@@ -461,6 +84,7 @@ def get_bag_cards(
     cards = []
 
     for card in ALL_CARDS:
+
         card_id = int(card["id"])
 
         if card_id not in quantities:
@@ -491,9 +115,7 @@ def get_bag_cards(
         cards.append(
             {
                 "id": card_id,
-                "collection_id": card[
-                    "collection_id"
-                ],
+                "collection_id": card["collection_id"],
                 "stars": card["stars"],
                 "vault": get_card_vault(
                     card["collection_id"]
@@ -517,7 +139,9 @@ def search_bag_cards(
     user_id: int,
     query: str,
 ) -> list[dict]:
-    query = query.upper()
+    """Search by Card ID or Collection ID."""
+
+    query = query.strip().upper()
 
     cards = get_bag_cards(
         user_id,
@@ -525,6 +149,7 @@ def search_bag_cards(
     )
 
     if query.isdigit():
+
         card_id = int(query)
 
         return [
@@ -536,12 +161,397 @@ def search_bag_cards(
     return [
         card
         for card in cards
-        if card["collection_id"].upper()
-        == query
+        if card["collection_id"].upper() == query
     ]
 
 
+def build_bag_embed(
+    user: discord.User | discord.Member,
+    cards: list[dict],
+    page: int,
+) -> discord.Embed:
+    """Build the Bag content embed."""
+
+    start = page * CARDS_PER_PAGE
+    end = start + CARDS_PER_PAGE
+
+    page_cards = cards[start:end]
+
+    lines = [
+        f"**{user.mention}'s BAG**",
+        "",
+    ]
+
+    current_rarity = None
+
+    for card in page_cards:
+
+        rarity = card["stars"]
+
+        if rarity != current_rarity:
+
+            if current_rarity is not None:
+                lines.append("")
+
+            lines.append(
+                f"**{rarity}**"
+            )
+
+            current_rarity = rarity
+
+        lines.append(
+            f"`[{card['id']}]` "
+            f"[View]({card['image']}) "
+            f"{card['vault']} × **{card['quantity']}**"
+        )
+
+    if not page_cards:
+
+        lines.append(
+            "✦ Your Bag is empty."
+        )
+
+    total_pages = max(
+        1,
+        (len(cards) + CARDS_PER_PAGE - 1)
+        // CARDS_PER_PAGE,
+    )
+
+    lines.extend(
+        [
+            "",
+            f"-# Page {page + 1}/{total_pages}",
+        ]
+    )
+
+    return discord.Embed(
+        description="\n".join(lines),
+        color=EMBED_COLOR,
+    )
+
+
+class BagView(discord.ui.View):
+
+    def __init__(
+        self,
+        user_id: int,
+        cards: list[dict],
+        filter_name: str = "all",
+    ):
+        super().__init__(
+            timeout=300
+        )
+
+        self.user_id = user_id
+        self.cards = cards
+        self.filter_name = filter_name
+        self.page = 0
+
+        self.update_buttons()
+
+    def update_buttons(self):
+
+        total_pages = max(
+            1,
+            (len(self.cards) + CARDS_PER_PAGE - 1)
+            // CARDS_PER_PAGE,
+        )
+
+        self.previous.disabled = (
+            self.page <= 0
+        )
+
+        self.next.disabled = (
+            self.page >= total_pages - 1
+        )
+
+    async def check_user(
+        self,
+        interaction: discord.Interaction,
+    ) -> bool:
+
+        if interaction.user.id != self.user_id:
+
+            await interaction.response.send_message(
+                "✦ This Bag belongs to another player.",
+                ephemeral=True,
+            )
+
+            return False
+
+        return True
+
+    @discord.ui.button(
+        label="《",
+        style=discord.ButtonStyle.secondary,
+    )
+    async def previous(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        if not await self.check_user(interaction):
+            return
+
+        if self.page > 0:
+            self.page -= 1
+
+        self.update_buttons()
+
+        await interaction.response.edit_message(
+            embed=build_bag_embed(
+                interaction.user,
+                self.cards,
+                self.page,
+            ),
+            view=self,
+        )
+
+    @discord.ui.button(
+        label="》",
+        style=discord.ButtonStyle.secondary,
+    )
+    async def next(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        if not await self.check_user(interaction):
+            return
+
+        total_pages = max(
+            1,
+            (len(self.cards) + CARDS_PER_PAGE - 1)
+            // CARDS_PER_PAGE,
+        )
+
+        if self.page < total_pages - 1:
+            self.page += 1
+
+        self.update_buttons()
+
+        await interaction.response.edit_message(
+            embed=build_bag_embed(
+                interaction.user,
+                self.cards,
+                self.page,
+            ),
+            view=self,
+        )
+
+    @discord.ui.button(
+        label="Sort",
+        style=discord.ButtonStyle.danger,
+    )
+    async def sort_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        if not await self.check_user(interaction):
+            return
+
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                description=(
+                    "✦ Choose how you want to sort your Bag."
+                ),
+                color=EMBED_COLOR,
+            ),
+            view=SortView(
+                self,
+                interaction.user.id,
+            ),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="Search",
+        style=discord.ButtonStyle.danger,
+    )
+    async def search_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        if not await self.check_user(interaction):
+            return
+
+        await interaction.response.send_modal(
+            BagSearchModal(
+                self,
+                interaction.user.id,
+            )
+        )
+
+
+class SortSelect(
+    discord.ui.Select
+):
+
+    def __init__(
+        self,
+        parent_view: BagView,
+        user_id: int,
+    ):
+
+        self.parent_view = parent_view
+        self.user_id = user_id
+
+        options = [
+            discord.SelectOption(
+                label="Normal",
+                value="normal",
+                description="Show Normal cards.",
+            ),
+            discord.SelectOption(
+                label="Rare",
+                value="rare",
+                description="Show Rare cards.",
+            ),
+            discord.SelectOption(
+                label="Epic",
+                value="epic",
+                description="Show Epic cards.",
+            ),
+            discord.SelectOption(
+                label="Limited",
+                value="limited",
+                description="Show Limited cards.",
+            ),
+            discord.SelectOption(
+                label="3+ Duplicates",
+                value="duplicates",
+                description=(
+                    "Show cards you own 3 or more times."
+                ),
+            ),
+        ]
+
+        super().__init__(
+            placeholder="Choose a filter...",
+            options=options,
+        )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction,
+    ):
+
+        if interaction.user.id != self.user_id:
+
+            await interaction.response.send_message(
+                "✦ This Bag belongs to another player.",
+                ephemeral=True,
+            )
+
+            return
+
+        self.parent_view.cards = get_bag_cards(
+            self.user_id,
+            self.values[0],
+        )
+
+        self.parent_view.filter_name = (
+            self.values[0]
+        )
+
+        self.parent_view.page = 0
+
+        self.parent_view.update_buttons()
+
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                description="✦ Bag filter applied.",
+                color=EMBED_COLOR,
+            ),
+            view=None,
+        )
+
+
+class SortView(
+    discord.ui.View
+):
+
+    def __init__(
+        self,
+        parent_view: BagView,
+        user_id: int,
+    ):
+
+        super().__init__(
+            timeout=60
+        )
+
+        self.add_item(
+            SortSelect(
+                parent_view,
+                user_id,
+            )
+        )
+
+
+class BagSearchModal(
+    discord.ui.Modal
+):
+
+    def __init__(
+        self,
+        parent_view: BagView,
+        user_id: int,
+    ):
+
+        super().__init__(
+            title="Search Bag"
+        )
+
+        self.parent_view = parent_view
+        self.user_id = user_id
+
+        self.search = discord.ui.TextInput(
+            label="Card ID or Collection ID",
+            placeholder="Example: 42 or BB_1",
+            required=True,
+            max_length=50,
+        )
+
+        self.add_item(
+            self.search
+        )
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction,
+    ):
+
+        query = self.search.value.strip()
+
+        self.parent_view.cards = search_bag_cards(
+            self.user_id,
+            query,
+        )
+
+        self.parent_view.filter_name = (
+            "search"
+        )
+
+        self.parent_view.page = 0
+
+        self.parent_view.update_buttons()
+
+        await interaction.response.send_message(
+            "✦ Bag search applied.",
+            ephemeral=True,
+        )
+
+
 class Bag(commands.Cog):
+    """Magic Cabinet Bag commands."""
+
     def __init__(
         self,
         bot: commands.Bot,
@@ -556,6 +566,7 @@ class Bag(commands.Cog):
         self,
         interaction: discord.Interaction,
     ):
+
         cards = get_bag_cards(
             interaction.user.id
         )
@@ -565,22 +576,35 @@ class Bag(commands.Cog):
             cards,
         )
 
+        header_embed = discord.Embed(
+            color=EMBED_COLOR,
+        )
+
+        header_embed.set_image(
+            url=HEADER_URL
+        )
+
+        bag_embed = build_bag_embed(
+            interaction.user,
+            cards,
+            view.page,
+        )
+
+        divider_embed = discord.Embed(
+            color=EMBED_COLOR,
+        )
+
+        divider_embed.set_image(
+            url=DIVIDER_URL
+        )
+
         await interaction.response.send_message(
-            embed=make_header_embed()
-        )
-
-        main_message = await interaction.followup.send(
-            embed=view.build_embed(
-                interaction.user
-            ),
+            embeds=[
+                header_embed,
+                bag_embed,
+                divider_embed,
+            ],
             view=view,
-            wait=True,
-        )
-
-        view.message_id = main_message.id
-
-        await interaction.followup.send(
-            embed=make_footer_embed()
         )
 
 
@@ -589,4 +613,4 @@ async def setup(
 ):
     await bot.add_cog(
         Bag(bot)
-    )
+        )
