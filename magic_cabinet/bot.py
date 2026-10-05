@@ -72,6 +72,8 @@ class MagicCabinetBot(commands.Bot):
         
         await self.load_extension("magic_cabinet.cogs.booster")
         
+        await self.load_extension("magic_cabinet.cogs.weekly")
+      
         print("=== ALL EXTENSIONS LOADED ===")
 
         synced = await self.tree.sync()
