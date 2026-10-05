@@ -67,6 +67,8 @@ class MagicCabinetBot(commands.Bot):
         await self.load_extension(
             "magic_cabinet.cogs.earn"
         )
+        
+        await self.load_extension("magic_cabinet.cogs.daily")
 
         print("=== ALL EXTENSIONS LOADED ===")
 
