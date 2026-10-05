@@ -11,8 +11,6 @@ from discord.ext import commands
 from PIL import Image, ImageOps
 
 
-EMBED_COLOR = discord.Color.from_str("#4E0017")
-
 HEADER_URL = (
     "https://raw.githubusercontent.com/"
     "shibu246800/Yeosang-s-magic-cabinet-/"
@@ -42,25 +40,17 @@ COLLECTIONS = [
 ]
 
 
-async def download_cover(
-    session: aiohttp.ClientSession,
-) -> Image.Image:
-    async with session.get(COVER_URL) as response:
-        response.raise_for_status()
-        data = await response.read()
+async def make_book() -> discord.File:
+    async with aiohttp.ClientSession() as session:
+        async with session.get(COVER_URL) as response:
+            response.raise_for_status()
+            data = await response.read()
 
-    return Image.open(BytesIO(data)).convert("RGBA")
-
-
-async def make_book(
-    source: Image.Image,
-) -> discord.File:
-    book_width = 140
-    book_height = 190
+    source = Image.open(BytesIO(data)).convert("RGBA")
 
     image = ImageOps.contain(
         source,
-        (book_width, book_height),
+        (130, 175),
     )
 
     buffer = BytesIO()
@@ -93,18 +83,10 @@ class CollectionView(discord.ui.LayoutView):
         )
 
         for name, collection_id in COLLECTIONS:
-            section = discord.ui.Section(
-                discord.ui.TextDisplay(
-                    f"### 𝑹𝒐𝒚𝒂𝒍 𝑪𝒐𝒖𝒓𝒕\n"
-                    f"`{collection_id}`"
-                ),
-                accessory=discord.ui.Button(
-                    emoji=RED_DOT,
-                    style=discord.ButtonStyle.secondary,
-                ),
+            button = discord.ui.Button(
+                emoji=RED_DOT,
+                style=discord.ButtonStyle.secondary,
             )
-
-            button = section.accessory
 
             async def callback(
                 interaction: discord.Interaction,
@@ -117,6 +99,13 @@ class CollectionView(discord.ui.LayoutView):
                 )
 
             button.callback = callback
+
+            section = discord.ui.Section(
+                discord.ui.TextDisplay(
+                    f"**{name}**\n`{collection_id}`"
+                ),
+                accessory=button,
+            )
 
             container.add_item(section)
 
@@ -136,8 +125,7 @@ class Collection(commands.Cog):
         interaction: discord.Interaction,
     ):
         await interaction.response.send_message(
-            "Collection browser is being prepared.",
-            ephemeral=True,
+            view=CollectionView(),
         )
 
 
