@@ -1,12 +1,19 @@
 """Magic Cabinet weekly challenges."""
 
+import json
 import random
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
+
+from magic_cabinet.weekly_tracker import (
+    get_pending_notifications,
+    mark_notification_sent,
+    save_weekly_channel,
+)
 
 
 DATABASE = "cabinet.db"
@@ -19,7 +26,7 @@ WEEKLY_HEADER_URL = (
     "https://raw.githubusercontent.com/"
     "shibu246800/Yeosang-s-magic-cabinet-/"
     "refs/heads/main/magic_cabinet/cogs/profile/"
-    "Untitled13_202605080611.jpg"
+    "Untitled13_20261005080611.jpg"
 )
 
 WEEKLY_GUARANTEED_GLIMMERS = 10_000
@@ -281,8 +288,6 @@ def create_new_week(user_id: int):
 
     now = datetime.now(timezone.utc).isoformat()
 
-    import json
-
     with sqlite3.connect(DATABASE) as connection:
         connection.execute(
             """
@@ -339,8 +344,6 @@ def create_new_week(user_id: int):
 
 
 def get_current_tasks(user_id: int):
-    import json
-
     row = get_weekly_data(user_id)
 
     if row is None:
@@ -400,50 +403,6 @@ def is_task_completed(
     return bool(row and row[0])
 
 
-def update_task_progress(
-    user_id: int,
-    task_id: str,
-    progress: int,
-):
-    with sqlite3.connect(DATABASE) as connection:
-        connection.execute(
-            """
-            UPDATE weekly_progress
-            SET progress = ?
-            WHERE user_id = ?
-            AND task_id = ?
-            """,
-            (
-                progress,
-                user_id,
-                task_id,
-            ),
-        )
-
-        connection.commit()
-
-
-def complete_task(
-    user_id: int,
-    task_id: str,
-):
-    with sqlite3.connect(DATABASE) as connection:
-        connection.execute(
-            """
-            UPDATE weekly_progress
-            SET completed = 1
-            WHERE user_id = ?
-            AND task_id = ?
-            """,
-            (
-                user_id,
-                task_id,
-            ),
-        )
-
-        connection.commit()
-
-
 def completed_task_count(user_id: int) -> int:
     with sqlite3.connect(DATABASE) as connection:
         row = connection.execute(
@@ -491,13 +450,19 @@ def build_weekly_embed(
             task["id"],
         )
 
-        if progress > task["amount"]:
-            progress = task["amount"]
+        progress = min(
+            progress,
+            task["amount"],
+        )
 
-        marker = " ✓" if is_task_completed(
-            user_id,
-            task["id"],
-        ) else ""
+        marker = (
+            " ✓"
+            if is_task_completed(
+                user_id,
+                task["id"],
+            )
+            else ""
+        )
 
         description += (
             f"{difficulty_emote(task['difficulty'])} "
@@ -523,7 +488,7 @@ def build_weekly_embed(
 
 
 # ---------------------------------------------------------
-# COMMAND
+# WEEKLY COG
 # ---------------------------------------------------------
 
 class Weekly(commands.Cog):
@@ -531,6 +496,96 @@ class Weekly(commands.Cog):
         self.bot = bot
 
         initialize_weekly_database()
+
+        self.notification_loop.start()
+
+    def cog_unload(self):
+        self.notification_loop.cancel()
+
+    async def send_pending_notifications(self):
+        notifications = get_pending_notifications()
+
+        for (
+            notification_id,
+            user_id,
+            task_id,
+            guild_id,
+            channel_id,
+        ) in notifications:
+
+            guild = self.bot.get_guild(guild_id)
+
+            if guild is None:
+                continue
+
+            channel = guild.get_channel(channel_id)
+
+            if channel is None:
+                continue
+
+            tasks = get_current_tasks(user_id)
+
+            task = next(
+                (
+                    item
+                    for item in tasks
+                    if item["id"] == task_id
+                ),
+                None,
+            )
+
+            if task is None:
+                mark_notification_sent(
+                    notification_id
+                )
+                continue
+
+            progress = get_task_progress(
+                user_id,
+                task_id,
+            )
+
+            completed = completed_task_count(
+                user_id
+            )
+
+            embed = discord.Embed(
+                description=(
+                    f"<@{user_id}>\n\n"
+                    "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
+                    "**WEEKLY CHALLENGE COMPLETE!** ✦\n\n"
+                    f"{difficulty_emote(task['difficulty'])} "
+                    f"**{task['display']}**\n"
+                    f"`{progress} / {task['amount']}` ✓\n\n"
+                    f"+ **{task['reward']:,}** "
+                    f"{GLIMMER_EMOTE}\n\n"
+                    f"✦ **{completed} / 3** "
+                    "challenges completed\n\n"
+                    "-# ✧ Use `/rewards` to view "
+                    "your waiting rewards.\n"
+                    "-# ✧ Claim them with the "
+                    "button below.\n\n"
+                    "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
+                ),
+                color=EMBED_COLOR,
+            )
+
+            await channel.send(
+                content=f"<@{user_id}>",
+                embed=embed,
+            )
+
+            mark_notification_sent(
+                notification_id
+            )
+
+    @tasks.loop(seconds=5)
+    async def notification_loop(self):
+        await self.send_pending_notifications()
+
+    @notification_loop.before_loop
+    async def before_notification_loop(self):
+        await self.bot.wait_until_ready()
 
     @app_commands.command(
         name="weekly",
@@ -553,6 +608,12 @@ class Weekly(commands.Cog):
             )
         else:
             tasks = get_current_tasks(user_id)
+
+        save_weekly_channel(
+            user_id,
+            interaction.guild_id,
+            interaction.channel_id,
+        )
 
         header = discord.Embed(
             color=EMBED_COLOR,
