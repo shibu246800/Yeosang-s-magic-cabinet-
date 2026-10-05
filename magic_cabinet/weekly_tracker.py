@@ -4,6 +4,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
+
 DATABASE = "cabinet.db"
 
 
@@ -73,6 +74,7 @@ def save_weekly_channel(
                 channel_id,
             ),
         )
+
         connection.commit()
 
 
@@ -81,69 +83,132 @@ def record_weekly_progress(
     stat: str,
     amount: int = 1,
 ):
-    now = datetime.now(timezone.utc).isoformat()
+    """
+    Add progress to the current weekly challenge.
+
+    Supported stats currently include:
+        new_cards
+        glimmers_earned
+        drops_claimed
+    """
+
+    if amount <= 0:
+        return
+
+    now = datetime.now(
+        timezone.utc
+    ).isoformat()
 
     with sqlite3.connect(DATABASE) as connection:
-        rows = connection.execute(
+        row = connection.execute(
             """
             SELECT
-                challenge_id,
-                task_data,
+                task_data
+            FROM weekly_challenges
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+
+        if row is None:
+            return
+
+        try:
+            tasks = json.loads(row[0])
+        except (
+            TypeError,
+            json.JSONDecodeError,
+        ):
+            return
+
+        progress_rows = connection.execute(
+            """
+            SELECT
+                task_id,
                 progress,
                 completed
-            FROM weekly_challenges
+            FROM weekly_progress
             WHERE user_id = ?
             """,
             (user_id,),
         ).fetchall()
 
-        completed_now = []
+        progress_map = {
+            task_id: (
+                int(progress),
+                bool(completed),
+            )
+            for task_id, progress, completed
+            in progress_rows
+        }
 
-        for challenge_id, task_data, progress, completed in rows:
-            if completed:
-                continue
+        newly_completed = []
 
-            try:
-                task = json.loads(task_data)
-            except (TypeError, json.JSONDecodeError):
-                continue
-
+        for task in tasks:
             if task.get("stat") != stat:
                 continue
 
-            target = int(task.get("target", 0))
-            old_progress = int(progress or 0)
+            task_id = task.get("id")
+
+            if not task_id:
+                continue
+
+            current_progress, completed = (
+                progress_map.get(
+                    task_id,
+                    (0, False),
+                )
+            )
+
+            if completed:
+                continue
+
+            target = int(
+                task.get(
+                    "amount",
+                    0,
+                )
+            )
+
             new_progress = min(
-                old_progress + amount,
+                current_progress + amount,
                 target,
             )
 
-            is_now_complete = new_progress >= target
+            now_completed = (
+                target > 0
+                and new_progress >= target
+            )
 
             connection.execute(
                 """
-                UPDATE weekly_challenges
+                UPDATE weekly_progress
                 SET progress = ?,
                     completed = ?
-                WHERE challenge_id = ?
+                WHERE user_id = ?
+                AND task_id = ?
                 """,
                 (
                     new_progress,
-                    1 if is_now_complete else 0,
-                    challenge_id,
+                    1 if now_completed else 0,
+                    user_id,
+                    task_id,
                 ),
             )
 
-            if is_now_complete:
-                completed_now.append(
-                    (
-                        challenge_id,
-                        task,
-                    )
+            if now_completed:
+                newly_completed.append(
+                    task
                 )
 
-        for challenge_id, task in completed_now:
-            reward = int(task.get("reward", 0))
+        for task in newly_completed:
+            task_id = task["id"]
+            reward = int(
+                task.get(
+                    "reward",
+                    0,
+                )
+            )
 
             connection.execute(
                 """
@@ -157,7 +222,7 @@ def record_weekly_progress(
                 """,
                 (
                     user_id,
-                    str(challenge_id),
+                    task_id,
                     now,
                 ),
             )
@@ -172,20 +237,27 @@ def record_weekly_progress(
                     claimed,
                     created_at
                 )
-                VALUES (?, 'task_glimmers', ?, ?, 0, ?)
+                VALUES (
+                    ?,
+                    'task_glimmers',
+                    ?,
+                    ?,
+                    0,
+                    ?
+                )
                 """,
                 (
                     user_id,
                     reward,
-                    str(challenge_id),
+                    task_id,
                     now,
                 ),
             )
 
-        total_completed = connection.execute(
+        completed_count = connection.execute(
             """
             SELECT COUNT(*)
-            FROM weekly_challenges
+            FROM weekly_progress
             WHERE user_id = ?
             AND completed = 1
             """,
@@ -195,14 +267,17 @@ def record_weekly_progress(
         total_tasks = connection.execute(
             """
             SELECT COUNT(*)
-            FROM weekly_challenges
+            FROM weekly_progress
             WHERE user_id = ?
             """,
             (user_id,),
         ).fetchone()[0]
 
-        if total_tasks == 3 and total_completed == 3:
-            grand_exists = connection.execute(
+        if (
+            total_tasks == 3
+            and completed_count == 3
+        ):
+            grand_reward_exists = connection.execute(
                 """
                 SELECT 1
                 FROM weekly_pending_rewards
@@ -214,7 +289,7 @@ def record_weekly_progress(
                 (user_id,),
             ).fetchone()
 
-            if grand_exists is None:
+            if grand_reward_exists is None:
                 connection.execute(
                     """
                     INSERT INTO weekly_pending_rewards (
@@ -225,7 +300,14 @@ def record_weekly_progress(
                         claimed,
                         created_at
                     )
-                    VALUES (?, 'weekly_grand', 0, NULL, 0, ?)
+                    VALUES (
+                        ?,
+                        'weekly_grand',
+                        0,
+                        NULL,
+                        0,
+                        ?
+                    )
                     """,
                     (
                         user_id,
@@ -241,7 +323,12 @@ def record_weekly_progress(
                         created_at,
                         sent
                     )
-                    VALUES (?, '__weekly_complete__', ?, 0)
+                    VALUES (
+                        ?,
+                        '__weekly_complete__',
+                        ?,
+                        0
+                    )
                     """,
                     (
                         user_id,
@@ -273,7 +360,9 @@ def get_pending_notifications():
     return rows
 
 
-def mark_notification_sent(notification_id: int):
+def mark_notification_sent(
+    notification_id: int,
+):
     with sqlite3.connect(DATABASE) as connection:
         connection.execute(
             """
@@ -283,6 +372,7 @@ def mark_notification_sent(notification_id: int):
             """,
             (notification_id,),
         )
+
         connection.commit()
 
 
