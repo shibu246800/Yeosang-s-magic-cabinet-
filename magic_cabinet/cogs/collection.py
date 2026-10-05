@@ -74,6 +74,7 @@ class CollectionView(discord.ui.LayoutView):
 
         container = discord.ui.Container()
 
+        # Header
         container.add_item(
             discord.ui.MediaGallery(
                 discord.MediaGalleryItem(
@@ -82,7 +83,9 @@ class CollectionView(discord.ui.LayoutView):
             )
         )
 
+        # Collection entries
         for name, collection_id in COLLECTIONS:
+
             button = discord.ui.Button(
                 emoji=RED_DOT,
                 style=discord.ButtonStyle.secondary,
@@ -124,7 +127,10 @@ class Collection(commands.Cog):
         self,
         interaction: discord.Interaction,
     ):
+        file = await make_book()
+
         await interaction.response.send_message(
+            file=file,
             view=CollectionView(),
         )
 
