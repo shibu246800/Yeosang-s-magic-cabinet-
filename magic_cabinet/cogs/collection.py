@@ -11,12 +11,18 @@ from discord.ext import commands
 from PIL import Image, ImageOps
 
 
-DATABASE = "cabinet.db"
 EMBED_COLOR = discord.Color.from_str("#4E0017")
+
+HEADER_URL = (
+    "https://raw.githubusercontent.com/"
+    "shibu246800/Yeosang-s-magic-cabinet-/"
+    "refs/heads/main/magic_cabinet/cogs/profile/"
+    "Untitled13_20261005205021.jpg"
+)
 
 RED_DOT = "<a:reddot:1556245637425533048>"
 
-ROYAL_COURT_COVER = (
+COVER_URL = (
     "https://raw.githubusercontent.com/"
     "shibu246800/Yeosang-s-magic-cabinet-/"
     "refs/heads/main/magic_cabinet/collection_covers/"
@@ -24,149 +30,76 @@ ROYAL_COURT_COVER = (
 )
 
 COLLECTIONS = [
-    {
-        "id": "BB_1",
-        "name": "Royal Court",
-        "cover": ROYAL_COURT_COVER,
-    },
-    {
-        "id": "BB_2",
-        "name": "Dark Academia",
-        "cover": ROYAL_COURT_COVER,
-    },
-    {
-        "id": "BB_3",
-        "name": "Mafia",
-        "cover": ROYAL_COURT_COVER,
-    },
-    {
-        "id": "BB_4",
-        "name": "Mythology",
-        "cover": ROYAL_COURT_COVER,
-    },
-    {
-        "id": "BB_5",
-        "name": "Royal Heirs",
-        "cover": ROYAL_COURT_COVER,
-    },
-    {
-        "id": "BB_6",
-        "name": "Blood Moon",
-        "cover": ROYAL_COURT_COVER,
-    },
-    {
-        "id": "BB_7",
-        "name": "Velvet Night",
-        "cover": ROYAL_COURT_COVER,
-    },
-    {
-        "id": "BB_8",
-        "name": "Forbidden Court",
-        "cover": ROYAL_COURT_COVER,
-    },
-    {
-        "id": "BB_9",
-        "name": "Midnight Crown",
-        "cover": ROYAL_COURT_COVER,
-    },
+    ("Royal Court", "BB_1"),
+    ("Dark Academia", "BB_2"),
+    ("Mafia", "BB_3"),
+    ("Mythology", "BB_4"),
+    ("Royal Heirs", "BB_5"),
+    ("Blood Moon", "BB_6"),
+    ("Velvet Night", "BB_7"),
+    ("Forbidden Court", "BB_8"),
+    ("Midnight Crown", "BB_9"),
 ]
 
 
 async def download_cover(
     session: aiohttp.ClientSession,
-    url: str,
 ) -> Image.Image:
-    async with session.get(url) as response:
+    async with session.get(COVER_URL) as response:
         response.raise_for_status()
         data = await response.read()
 
     return Image.open(BytesIO(data)).convert("RGBA")
 
 
-async def build_collection_image(
-    collections: list[dict],
-) -> discord.File:
-    """Build transparent collection books."""
-
+async def make_books() -> discord.File:
     async with aiohttp.ClientSession() as session:
-        images = [
-            await download_cover(session, collection["cover"])
-            for collection in collections
-        ]
+        source = await download_cover(session)
 
-    book_width = 120
-    book_height = 170
+    # Small books
+    book_width = 105
+    book_height = 150
 
-    horizontal_gap = 70
-    vertical_gap = 45
+    # Large breathing space
+    horizontal_gap = 110
+    vertical_gap = 55
 
-    row_width = (
+    total_width = (
         book_width * 3
         + horizontal_gap * 2
     )
 
-    rows = (len(images) + 2) // 3
-
     total_height = (
-        rows * book_height
-        + (rows - 1) * vertical_gap
+        book_height * 3
+        + vertical_gap * 2
     )
 
     canvas = Image.new(
         "RGBA",
-        (row_width, total_height),
+        (total_width, total_height),
         (0, 0, 0, 0),
     )
 
-    for index, image in enumerate(images):
-        fitted = ImageOps.contain(
-            image,
+    for index in range(9):
+        image = ImageOps.contain(
+            source,
             (book_width, book_height),
-        )
-
-        book = Image.new(
-            "RGBA",
-            (book_width, book_height),
-            (0, 0, 0, 0),
-        )
-
-        x = (book_width - fitted.width) // 2
-        y = (book_height - fitted.height) // 2
-
-        book.alpha_composite(
-            fitted,
-            (x, y),
         )
 
         row = index // 3
         column = index % 3
 
-        items_in_row = min(
-            3,
-            len(images) - row * 3,
+        x = column * (
+            book_width + horizontal_gap
         )
 
-        actual_row_width = (
-            items_in_row * book_width
-            + (items_in_row - 1) * horizontal_gap
-        )
-
-        row_start = (
-            row_width - actual_row_width
-        ) // 2
-
-        canvas_x = (
-            row_start
-            + column * (book_width + horizontal_gap)
-        )
-
-        canvas_y = (
-            row * (book_height + vertical_gap)
+        y = row * (
+            book_height + vertical_gap
         )
 
         canvas.alpha_composite(
-            book,
-            (canvas_x, canvas_y),
+            image,
+            (x, y),
         )
 
     buffer = BytesIO()
@@ -184,14 +117,36 @@ async def build_collection_image(
     )
 
 
-class CollectionButtons(discord.ui.View):
-    def __init__(
-        self,
-        collections: list[dict],
-    ):
+class CollectionView(discord.ui.LayoutView):
+    def __init__(self):
         super().__init__(timeout=180)
 
-        for index, collection in enumerate(collections):
+        container = discord.ui.Container()
+
+        # Header
+        container.add_item(
+            discord.ui.MediaGallery(
+                discord.MediaGalleryItem(
+                    HEADER_URL,
+                ),
+            )
+        )
+
+        # Collection books
+        container.add_item(
+            discord.ui.MediaGallery(
+                discord.MediaGalleryItem(
+                    "attachment://collection_books.png",
+                ),
+            )
+        )
+
+        # Buttons
+        buttons = discord.ui.ActionRow()
+
+        for index, (name, collection_id) in enumerate(
+            COLLECTIONS
+        ):
             button = discord.ui.Button(
                 emoji=RED_DOT,
                 style=discord.ButtonStyle.secondary,
@@ -200,22 +155,24 @@ class CollectionButtons(discord.ui.View):
 
             async def callback(
                 interaction: discord.Interaction,
-                collection=collection,
+                name=name,
+                collection_id=collection_id,
             ):
                 await interaction.response.send_message(
-                    f"**{collection['name']}**\n"
-                    f"`{collection['id']}`",
+                    f"**{name}**\n`{collection_id}`",
                     ephemeral=True,
                 )
 
             button.callback = callback
 
-            self.add_item(button)
+            buttons.add_item(button)
+
+        container.add_item(buttons)
+
+        self.add_item(container)
 
 
 class Collection(commands.Cog):
-    """Collection browser."""
-
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
@@ -229,24 +186,13 @@ class Collection(commands.Cog):
     ):
         await interaction.response.defer()
 
-        visible = COLLECTIONS[:9]
+        file = await make_books()
 
-        file = await build_collection_image(
-            visible
-        )
-
-        embed = discord.Embed(
-            color=EMBED_COLOR,
-        )
-
-        embed.set_image(
-            url="attachment://collection_books.png"
-        )
+        view = CollectionView()
 
         await interaction.followup.send(
-            embed=embed,
             file=file,
-            view=CollectionButtons(visible),
+            view=view,
         )
 
 
