@@ -1,18 +1,47 @@
 """Magic Cabinet reward center."""
 
+import asyncio
 import random
 import sqlite3
+from io import BytesIO
 
+import aiohttp
 import discord
+from PIL import Image, ImageDraw
 from discord import app_commands
 from discord.ext import commands
 
 from magic_cabinet.data.epic import CARDS as EPIC_CARDS
+from magic_cabinet.data.rare import CARDS as RARE_CARDS
+
 
 DATABASE = "cabinet.db"
 EMBED_COLOR = discord.Color.from_str("#4E0017")
 GLIMMER_EMOTE = "<:glimmer:1554842064464773172>"
+MAGIC_EMOTE = "<a:magic:1556011520012460135>"
+
 WEEKLY_GRAND_GLIMMERS = 25_000
+
+BLIND_BOX_FRAMES = [
+    "https://raw.githubusercontent.com/shibu246800/Yeosang-s-magic-cabinet-/refs/heads/main/magic_cabinet/cogs/profile/Untitled18_20261005113854.png",
+    "https://raw.githubusercontent.com/shibu246800/Yeosang-s-magic-cabinet-/refs/heads/main/magic_cabinet/cogs/profile/Untitled18_20261005113858.png",
+    "https://raw.githubusercontent.com/shibu246800/Yeosang-s-magic-cabinet-/refs/heads/main/magic_cabinet/cogs/profile/Untitled18_20261005113904.png",
+    "https://raw.githubusercontent.com/shibu246800/Yeosang-s-magic-cabinet-/refs/heads/main/magic_cabinet/cogs/profile/Untitled18_20261005113908.png",
+]
+
+CARD_WIDTH = 450
+CARD_HEIGHT = 630
+
+TEMPLATE_WIDTH = 480
+TEMPLATE_HEIGHT = 660
+
+CARD_GAP = 70
+ROW_GAP = 35
+
+BACKGROUND = (0, 0, 0, 0)
+
+GOLD = (212, 175, 55, 255)
+LIGHT_GOLD = (238, 220, 160, 255)
 
 
 def initialize_rewards_database():
@@ -81,6 +110,34 @@ def add_blind_boxes(user_id: int, amount: int):
         )
 
         connection.commit()
+
+
+def remove_blind_box(user_id: int) -> bool:
+    with sqlite3.connect(DATABASE) as connection:
+        row = connection.execute(
+            """
+            SELECT quantity
+            FROM blind_boxes
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+
+        if row is None or row[0] <= 0:
+            return False
+
+        connection.execute(
+            """
+            UPDATE blind_boxes
+            SET quantity = quantity - 1
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+
+        connection.commit()
+
+    return True
 
 
 def get_bag_quantity(
@@ -199,6 +256,222 @@ def choose_new_epic(user_id: int):
         return None
 
     return random.choice(available)
+
+
+def choose_blind_box_cards():
+    pool = RARE_CARDS + EPIC_CARDS
+
+    return random.choices(
+        pool,
+        k=5,
+    )
+
+
+def draw_ornament(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+):
+    draw.ellipse(
+        (
+            x - 14,
+            y - 2,
+            x - 10,
+            y + 2,
+        ),
+        fill=LIGHT_GOLD,
+    )
+
+    draw.ellipse(
+        (
+            x + 10,
+            y - 2,
+            x + 14,
+            y + 2,
+        ),
+        fill=LIGHT_GOLD,
+    )
+
+    draw.polygon(
+        [
+            (
+                x,
+                y - 11,
+            ),
+            (
+                x + 4,
+                y - 4,
+            ),
+            (
+                x + 11,
+                y,
+            ),
+            (
+                x + 4,
+                y + 4,
+            ),
+            (
+                x,
+                y + 11,
+            ),
+            (
+                x - 4,
+                y + 4,
+            ),
+            (
+                x - 11,
+                y,
+            ),
+            (
+                x - 4,
+                y - 4,
+            ),
+        ],
+        fill=GOLD,
+    )
+
+
+async def create_blind_box_display(
+    cards: list[dict],
+) -> BytesIO:
+    images = []
+
+    async with aiohttp.ClientSession() as session:
+        for card in cards:
+            async with session.get(card["image"]) as response:
+                response.raise_for_status()
+                image_data = await response.read()
+
+            image = Image.open(
+                BytesIO(image_data)
+            ).convert("RGBA")
+
+            image.thumbnail(
+                (
+                    CARD_WIDTH,
+                    CARD_HEIGHT,
+                )
+            )
+
+            canvas = Image.new(
+                "RGBA",
+                (
+                    TEMPLATE_WIDTH,
+                    TEMPLATE_HEIGHT,
+                ),
+                BACKGROUND,
+            )
+
+            x = (
+                TEMPLATE_WIDTH - image.width
+            ) // 2
+
+            y = (
+                TEMPLATE_HEIGHT - image.height
+            ) // 2
+
+            canvas.paste(
+                image,
+                (x, y),
+                image,
+            )
+
+            images.append(canvas)
+
+    top_width = (
+        TEMPLATE_WIDTH * 3
+        + CARD_GAP * 2
+    )
+
+    total_height = (
+        TEMPLATE_HEIGHT * 2
+        + ROW_GAP
+    )
+
+    display = Image.new(
+        "RGBA",
+        (
+            top_width,
+            total_height,
+        ),
+        BACKGROUND,
+    )
+
+    draw = ImageDraw.Draw(display)
+
+    # Top row: 3 cards
+    for index in range(3):
+        x = index * (
+            TEMPLATE_WIDTH + CARD_GAP
+        )
+
+        display.alpha_composite(
+            images[index],
+            (
+                x,
+                0,
+            ),
+        )
+
+        if index < 2:
+            draw_ornament(
+                draw,
+                x
+                + TEMPLATE_WIDTH
+                + CARD_GAP // 2,
+                TEMPLATE_HEIGHT // 2,
+            )
+
+    # Bottom row: 2 cards, centered
+    bottom_width = (
+        TEMPLATE_WIDTH * 2
+        + CARD_GAP
+    )
+
+    bottom_start = (
+        top_width - bottom_width
+    ) // 2
+
+    for index in range(2):
+        x = (
+            bottom_start
+            + index * (
+                TEMPLATE_WIDTH
+                + CARD_GAP
+            )
+        )
+
+        display.alpha_composite(
+            images[index + 3],
+            (
+                x,
+                TEMPLATE_HEIGHT
+                + ROW_GAP,
+            ),
+        )
+
+        if index == 0:
+            draw_ornament(
+                draw,
+                x
+                + TEMPLATE_WIDTH
+                + CARD_GAP // 2,
+                TEMPLATE_HEIGHT
+                + ROW_GAP
+                + TEMPLATE_HEIGHT // 2,
+            )
+
+    output = BytesIO()
+
+    display.save(
+        output,
+        format="PNG",
+        optimize=True,
+    )
+
+    output.seek(0)
+
+    return output
 
 
 def claim_rewards(user_id: int):
@@ -398,7 +671,7 @@ class RewardsView(discord.ui.View):
 
         if result["epic"]:
             lines.append(
-                f"+ **{result['epic']['name']}** "
+                f"+ **{result['epic']['id']}** "
                 "`NEW Epic card`"
             )
 
@@ -422,6 +695,73 @@ class RewardsView(discord.ui.View):
                 color=EMBED_COLOR,
             ),
             view=self,
+        )
+
+
+class BlindBoxView(discord.ui.View):
+    def __init__(
+        self,
+        user_id: int,
+        cards: list[dict],
+    ):
+        super().__init__(timeout=120)
+
+        self.user_id = user_id
+        self.cards = cards
+        self.claimed = False
+
+    @discord.ui.button(
+        label="Claim",
+        emoji=MAGIC_EMOTE,
+        style=discord.ButtonStyle.danger,
+    )
+    async def claim(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description="✦ This Blind Box belongs to another player.",
+                    color=EMBED_COLOR,
+                ),
+                ephemeral=True,
+            )
+            return
+
+        if self.claimed:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description="✦ This Blind Box has already been claimed.",
+                    color=EMBED_COLOR,
+                ),
+                ephemeral=True,
+            )
+            return
+
+        self.claimed = True
+
+        for card in self.cards:
+            add_to_bag(
+                self.user_id,
+                int(card["id"]),
+            )
+
+        button.disabled = True
+
+        await interaction.response.edit_message(
+            attachments=[],
+            embeds=[],
+            view=self,
+        )
+
+        await interaction.followup.send(
+            embed=discord.Embed(
+                description="✦ Your 5 Blind Box cards have been added to your Bag.",
+                color=EMBED_COLOR,
+            ),
+            ephemeral=True,
         )
 
 
@@ -463,9 +803,87 @@ class Rewards(commands.Cog):
             ),
         )
 
+    @app_commands.command(
+        name="blindbox",
+        description="Open a Blind Box.",
+    )
+    async def blindbox(
+        self,
+        interaction: discord.Interaction,
+    ):
+        if get_blind_box_count(
+            interaction.user.id
+        ) <= 0:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description="✦ You don't have a Blind Box.",
+                    color=EMBED_COLOR,
+                ),
+                ephemeral=True,
+            )
+            return
+
+        if not remove_blind_box(
+            interaction.user.id
+        ):
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description="✦ You don't have a Blind Box.",
+                    color=EMBED_COLOR,
+                ),
+                ephemeral=True,
+            )
+            return
+
+        cards = choose_blind_box_cards()
+
+        view = BlindBoxView(
+            interaction.user.id,
+            cards,
+        )
+
+        await interaction.response.send_message(
+            embed=discord.Embed().set_image(
+                url=BLIND_BOX_FRAMES[0]
+            ),
+        )
+
+        message = await interaction.original_response()
+
+        for frame_url in BLIND_BOX_FRAMES[1:]:
+            await asyncio.sleep(2)
+
+            await interaction.edit_original_response(
+                embed=discord.Embed().set_image(
+                    url=frame_url
+                ),
+            )
+
+        await asyncio.sleep(2)
+
+        image = await create_blind_box_display(
+            cards
+        )
+
+        await interaction.edit_original_response(
+            embed=discord.Embed(
+                color=EMBED_COLOR,
+            ).set_image(
+                url="attachment://blind_box_cards.png"
+            ),
+            attachments=[
+                discord.File(
+                    image,
+                    filename="blind_box_cards.png",
+                )
+            ],
+            view=view,
+        )
+
 
 async def setup(bot: commands.Bot):
     initialize_rewards_database()
+
     await bot.add_cog(
         Rewards(bot)
-        )
+                       )
