@@ -1,33 +1,105 @@
 """Collection 3-book layout test."""
 
+from io import BytesIO
+
 import discord
 from discord import app_commands
 from discord.ext import commands
+from PIL import Image, ImageOps
+import aiohttp
 
 
-COVERS = [
-    (
-        "𝑹𝒐𝒚𝒂𝒍 𝑪𝒐𝒖𝒓𝒕",
-        "BB_1",
-        "https://raw.githubusercontent.com/"
-        "shibu246800/Yeosang-s-magic-cabinet-/refs/heads/main/"
-        "magic_cabinet/collection_covers/grok_1791211167707.jpg",
-    ),
-    (
-        "𝑫𝒂𝒓𝒌 𝑨𝒄𝒂𝒅𝒆𝒎𝒊𝒂",
-        "BB_2",
-        "https://raw.githubusercontent.com/"
-        "shibu246800/Yeosang-s-magic-cabinet-/refs/heads/main/"
-        "magic_cabinet/collection_covers/grok_1791211167707.jpg",
-    ),
-    (
-        "𝑴𝒂𝒇𝒊𝒂",
-        "BB_3",
-        "https://raw.githubusercontent.com/"
-        "shibu246800/Yeosang-s-magic-cabinet-/refs/heads/main/"
-        "magic_cabinet/collection_covers/grok_1791211167707.jpg",
-    ),
-]
+COVER_URL = (
+    "https://raw.githubusercontent.com/"
+    "shibu246800/Yeosang-s-magic-cabinet-/"
+    "refs/heads/main/magic_cabinet/collection_covers/"
+    "grok_1791211167707.jpg"
+)
+
+RED_DOT = "<a:reddot:1556245637425533048>"
+
+
+async def make_book_row(urls: list[str]) -> discord.File:
+    """Create a small 3-book row like the Drop display."""
+
+    async with aiohttp.ClientSession() as session:
+        images = []
+
+        for url in urls:
+            async with session.get(url) as response:
+                data = await response.read()
+
+            image = Image.open(BytesIO(data)).convert("RGB")
+            images.append(image)
+
+    book_width = 180
+    book_height = 240
+    gap = 24
+
+    resized = []
+
+    for image in images:
+        fitted = ImageOps.contain(
+            image,
+            (book_width, book_height),
+        )
+
+        canvas = Image.new(
+            "RGB",
+            (book_width, book_height),
+            "white",
+        )
+
+        x = (book_width - fitted.width) // 2
+        y = (book_height - fitted.height) // 2
+
+        canvas.paste(fitted, (x, y))
+        resized.append(canvas)
+
+    row = Image.new(
+        "RGB",
+        (
+            book_width * 3 + gap * 2,
+            book_height,
+        ),
+        "#2B0010",
+    )
+
+    for index, image in enumerate(resized):
+        x = index * (book_width + gap)
+        row.paste(image, (x, 0))
+
+    buffer = BytesIO()
+    row.save(buffer, format="PNG")
+    buffer.seek(0)
+
+    return discord.File(
+        buffer,
+        filename="collection_books.png",
+    )
+
+
+class CollectionView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+
+        for index in range(3):
+            button = discord.ui.Button(
+                emoji=RED_DOT,
+                style=discord.ButtonStyle.secondary,
+            )
+
+            async def callback(
+                interaction: discord.Interaction,
+                index=index,
+            ):
+                await interaction.response.send_message(
+                    f"Royal Court book {index + 1} opened.",
+                    ephemeral=True,
+                )
+
+            button.callback = callback
+            self.add_item(button)
 
 
 class Collection(commands.Cog):
@@ -42,52 +114,28 @@ class Collection(commands.Cog):
         self,
         interaction: discord.Interaction,
     ):
-        view = discord.ui.LayoutView()
+        await interaction.response.defer()
 
-        container = discord.ui.Container()
-
-        gallery = discord.ui.MediaGallery(
-            discord.MediaGalleryItem(
-                COVERS[0][2],
-                description=COVERS[0][0],
-            ),
-            discord.MediaGalleryItem(
-                COVERS[1][2],
-                description=COVERS[1][0],
-            ),
-            discord.MediaGalleryItem(
-                COVERS[2][2],
-                description=COVERS[2][0],
-            ),
+        file = await make_book_row(
+            [
+                COVER_URL,
+                COVER_URL,
+                COVER_URL,
+            ]
         )
 
-        container.add_item(gallery)
+        embed = discord.Embed(
+            color=discord.Color.from_str("#4E0017"),
+        )
 
-        buttons = discord.ui.ActionRow()
+        embed.set_image(
+            url="attachment://collection_books.png"
+        )
 
-        for name, collection_id, _ in COVERS:
-            button = discord.ui.Button(
-                emoji="<a:reddot:1556245637425533048>",
-                style=discord.ButtonStyle.secondary,
-            )
-
-            async def callback(
-                button_interaction: discord.Interaction,
-                collection_id=collection_id,
-            ):
-                await button_interaction.response.send_message(
-                    f"Collection `{collection_id}` opened.",
-                    ephemeral=True,
-                )
-
-            button.callback = callback
-            buttons.add_item(button)
-
-        container.add_item(buttons)
-        view.add_item(container)
-
-        await interaction.response.send_message(
-            view=view
+        await interaction.followup.send(
+            embed=embed,
+            file=file,
+            view=CollectionView(),
         )
 
 
