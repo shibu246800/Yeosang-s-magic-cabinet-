@@ -15,6 +15,18 @@ from magic_cabinet.data.rare import CARDS as RARE_CARDS
 DATABASE = "cabinet.db"
 EMBED_COLOR = discord.Color.from_str("#4E0017")
 
+HEADER_URL = (
+    "https://raw.githubusercontent.com/shibu246800/"
+    "Yeosang-s-magic-cabinet-/refs/heads/main/"
+    "magic_cabinet/cogs/profile/Untitled13.jpg"
+)
+
+FOOTER_URL = (
+    "https://raw.githubusercontent.com/shibu246800/"
+    "Yeosang-s-magic-cabinet-/refs/heads/main/"
+    "magic_cabinet/cogs/profile/Untitled14_20261003173415.jpg"
+)
+
 CARDS_PER_PAGE = 12
 
 
@@ -119,10 +131,20 @@ class BagView(discord.ui.View):
             ]
         )
 
-        return discord.Embed(
+        embed = discord.Embed(
             description="\n".join(lines),
             color=EMBED_COLOR,
         )
+
+        embed.set_image(
+            url=HEADER_URL
+        )
+
+        embed.set_footer(
+            icon_url=FOOTER_URL
+        )
+
+        return embed
 
     @discord.ui.button(
         label="《",
@@ -516,4 +538,4 @@ async def setup(
 ):
     await bot.add_cog(
         Bag(bot)
-      )
+    )
