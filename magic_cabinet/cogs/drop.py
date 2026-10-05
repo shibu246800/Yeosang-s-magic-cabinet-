@@ -76,7 +76,6 @@ def initialize_bag_database():
     """Create Bag and Glimmer tables if they do not exist."""
 
     with sqlite3.connect(DATABASE) as connection:
-
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS bag (
@@ -131,7 +130,6 @@ def choose_drop_cards() -> list[dict]:
     available_cards = all_cards.copy()
 
     for _ in range(DROP_CARD_COUNT):
-
         selected_rarity = choose_rarity()
 
         rarity_cards = [
@@ -262,7 +260,6 @@ def get_bag_quantity(
     """Return the player's current card quantity."""
 
     with sqlite3.connect(DATABASE) as connection:
-
         row = connection.execute(
             """
             SELECT quantity
@@ -294,7 +291,6 @@ def add_to_bag(
     """
 
     with sqlite3.connect(DATABASE) as connection:
-
         row = connection.execute(
             """
             SELECT quantity
@@ -309,7 +305,6 @@ def add_to_bag(
         ).fetchone()
 
         if row is None:
-
             connection.execute(
                 """
                 INSERT INTO bag (
@@ -357,7 +352,6 @@ def add_glimmers(
     """Add Glimmers to a player's balance."""
 
     with sqlite3.connect(DATABASE) as connection:
-
         connection.execute(
             """
             INSERT INTO balances (
@@ -384,7 +378,6 @@ def get_player_vaults(
     """Return all Vaults selected by a player."""
 
     with sqlite3.connect(DATABASE) as connection:
-
         rows = connection.execute(
             """
             SELECT vault
@@ -504,9 +497,7 @@ class CardButton(discord.ui.Button):
         user_id = interaction.user.id
 
         async with view.claim_lock:
-
             if view.expired:
-
                 embed = discord.Embed(
                     description=(
                         "✦ This drop has already ended."
@@ -526,7 +517,6 @@ class CardButton(discord.ui.Button):
             )
 
             if not selected_vaults:
-
                 embed = discord.Embed(
                     description=(
                         "🔒 Your Cabinet Vaults are not "
@@ -549,7 +539,6 @@ class CardButton(discord.ui.Button):
             )
 
             if card_vault not in selected_vaults:
-
                 embed = discord.Embed(
                     description=(
                         f"🔒 This card belongs to the "
@@ -583,9 +572,7 @@ class CardButton(discord.ui.Button):
             )
 
             if not is_owner:
-
                 if previous_choice is not None:
-
                     embed = discord.Embed(
                         description=(
                             "✦ You have already claimed "
@@ -604,7 +591,6 @@ class CardButton(discord.ui.Button):
                     return
 
                 if self.claimant is not None:
-
                     embed = discord.Embed(
                         description=(
                             "✦ This card has already "
@@ -627,9 +613,7 @@ class CardButton(discord.ui.Button):
                 )
 
             else:
-
                 if previous_choice == self.number:
-
                     embed = discord.Embed(
                         description=(
                             f"{OWNER_EMOTE} You are already "
@@ -646,7 +630,6 @@ class CardButton(discord.ui.Button):
                     return
 
                 if previous_choice is not None:
-
                     previous_button = (
                         view.get_button(
                             previous_choice
@@ -654,7 +637,6 @@ class CardButton(discord.ui.Button):
                     )
 
                     if previous_button is not None:
-
                         previous_claimant = (
                             previous_button.claimant
                         )
@@ -664,18 +646,15 @@ class CardButton(discord.ui.Button):
                             and previous_claimant.id
                             == user_id
                         ):
-
                             previous_button.claimant = None
                             previous_button.label = "0"
 
                 if self.claimant is not None:
-
                     previous_claimant = (
                         self.claimant
                     )
 
                     if previous_claimant.id != user_id:
-
                         old_choice = (
                             view.player_choices.get(
                                 previous_claimant.id
@@ -683,7 +662,6 @@ class CardButton(discord.ui.Button):
                         )
 
                         if old_choice == self.number:
-
                             del view.player_choices[
                                 previous_claimant.id
                             ]
@@ -740,7 +718,6 @@ class CardDropView(discord.ui.View):
             cards,
             start=1,
         ):
-
             self.add_item(
                 CardButton(
                     card,
@@ -757,12 +734,10 @@ class CardDropView(discord.ui.View):
         """Return a button by card number."""
 
         for item in self.children:
-
             if isinstance(
                 item,
                 CardButton,
             ):
-
                 if item.number == number:
                     return item
 
@@ -775,7 +750,6 @@ class CardDropView(discord.ui.View):
             return
 
         try:
-
             await self.message.edit(
                 view=self
             )
@@ -787,22 +761,17 @@ class CardDropView(discord.ui.View):
         """Finish the drop after 20 seconds."""
 
         async with self.claim_lock:
-
             self.expired = True
 
             for item in self.children:
-
                 if isinstance(
                     item,
                     CardButton,
                 ):
-
                     item.disabled = True
 
         if self.message is not None:
-
             try:
-
                 await self.message.edit(
                     view=self
                 )
@@ -821,7 +790,6 @@ class CardDropView(discord.ui.View):
         result_lines = []
 
         for item in self.children:
-
             if not isinstance(
                 item,
                 CardButton,
@@ -868,7 +836,6 @@ class CardDropView(discord.ui.View):
             ]
 
             if item.claimant is None:
-
                 result_lines.append(
                     (
                         f"**{position_emote}**\n"
@@ -894,16 +861,14 @@ class CardDropView(discord.ui.View):
                 rarity_reward,
             )
 
-            # Weekly challenge tracking.
-            # A successful card claim counts as one Drop.
+            # Weekly: successful Drop claim.
             record_weekly_progress(
                 claimant.id,
                 "drops_claimed",
                 1,
             )
 
-            # New cards count separately for the
-            # weekly "Collect new cards" challenge.
+            # Weekly: first copy of a card only.
             if was_new:
                 record_weekly_progress(
                     claimant.id,
@@ -912,13 +877,10 @@ class CardDropView(discord.ui.View):
                 )
 
             if was_new:
-
                 status = (
                     "You got a new card!"
                 )
-
             else:
-
                 status = (
                     f"You now have **{quantity}** copies!\n"
                     "You got a dupie! You can either: "
@@ -928,7 +890,6 @@ class CardDropView(discord.ui.View):
             total_reward = rarity_reward
 
             if claimant.id == self.owner_id:
-
                 add_glimmers(
                     claimant.id,
                     DROP_OWNER_REWARD,
@@ -947,7 +908,6 @@ class CardDropView(discord.ui.View):
                 )
 
             else:
-
                 reward_text = (
                     f"-# {rarity} 》 "
                     f"{rarity_reward} {GLIMMER_EMOTE} "
@@ -955,14 +915,11 @@ class CardDropView(discord.ui.View):
                 )
 
             if image_url:
-
                 view_line = (
                     f"[View]({image_url}) "
                     f"{claimant.mention}"
                 )
-
             else:
-
                 view_line = (
                     f"{claimant.mention}"
                 )
@@ -1031,7 +988,6 @@ class Drop(commands.Cog):
         )
 
         if cabinet is None:
-
             embed = discord.Embed(
                 description=(
                     "The Magic Cabinet setup is "
@@ -1047,7 +1003,6 @@ class Drop(commands.Cog):
             return
 
         if interaction.guild_id is None:
-
             embed = discord.Embed(
                 description=(
                     "This command can only be used "
@@ -1068,9 +1023,7 @@ class Drop(commands.Cog):
         )
 
         if not allowed:
-
             with sqlite3.connect(DATABASE) as connection:
-
                 saved_channels = connection.execute(
                     """
                     SELECT
@@ -1088,9 +1041,7 @@ class Drop(commands.Cog):
             channel_mentions = []
 
             if saved_channels:
-
                 for channel_id in saved_channels:
-
                     if channel_id is None:
                         continue
 
@@ -1101,19 +1052,15 @@ class Drop(commands.Cog):
                     )
 
                     if channel is not None:
-
                         channel_mentions.append(
                             channel.mention
                         )
 
             if channel_mentions:
-
                 channel_text = " • ".join(
                     channel_mentions
                 )
-
             else:
-
                 channel_text = (
                     "No configured Drop channels."
                 )
@@ -1140,7 +1087,6 @@ class Drop(commands.Cog):
         )
 
         if not has_vault:
-
             embed = discord.Embed(
                 description=(
                     "🔒 This vault remains sealed.\n"
@@ -1226,4 +1172,4 @@ async def setup(
 ):
     await bot.add_cog(
         Drop(bot)
-        )
+)
