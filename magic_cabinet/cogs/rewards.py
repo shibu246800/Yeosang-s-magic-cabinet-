@@ -25,7 +25,7 @@ WEEKLY_GRAND_GLIMMERS = 25_000
 BLIND_BOX_FRAMES = [
     "https://raw.githubusercontent.com/shibu246800/Yeosang-s-magic-cabinet-/refs/heads/main/magic_cabinet/cogs/profile/Untitled18_20261005113854.png",
     "https://raw.githubusercontent.com/shibu246800/Yeosang-s-magic-cabinet-/refs/heads/main/magic_cabinet/cogs/profile/Untitled18_20261005113858.png",
-    "https://raw.githubusercontent.com/shibu246800/Yeosang-s-magic-cabinet-/refs/heads/main/magic_cabinet/cogs/profile/Untitled18_20261005113904.png",
+    "https://raw.githubusercontent.com/shibu246800/Yeosang-s-magic-cabinet-/refs/heads/main/magic_cabinet/cogs/profile/Untitled18_20261005113858.png",
     "https://raw.githubusercontent.com/shibu246800/Yeosang-s-magic-cabinet-/refs/heads/main/magic_cabinet/cogs/profile/Untitled18_20261005113908.png",
 ]
 
@@ -399,7 +399,6 @@ async def create_blind_box_display(
 
     draw = ImageDraw.Draw(display)
 
-    # Top row: 3 cards
     for index in range(3):
         x = index * (
             TEMPLATE_WIDTH + CARD_GAP
@@ -422,7 +421,6 @@ async def create_blind_box_display(
                 TEMPLATE_HEIGHT // 2,
             )
 
-    # Bottom row: 2 cards, centered
     bottom_width = (
         TEMPLATE_WIDTH * 2
         + CARD_GAP
@@ -848,18 +846,31 @@ class Rewards(commands.Cog):
             ),
         )
 
-        message = await interaction.original_response()
+        await asyncio.sleep(5)
 
-        for frame_url in BLIND_BOX_FRAMES[1:]:
-            await asyncio.sleep(2)
+        await interaction.edit_original_response(
+            embed=discord.Embed().set_image(
+                url=BLIND_BOX_FRAMES[1]
+            ),
+        )
 
-            await interaction.edit_original_response(
-                embed=discord.Embed().set_image(
-                    url=frame_url
-                ),
-            )
+        await asyncio.sleep(5)
 
-        await asyncio.sleep(2)
+        await interaction.edit_original_response(
+            embed=discord.Embed().set_image(
+                url=BLIND_BOX_FRAMES[2]
+            ),
+        )
+
+        await asyncio.sleep(5)
+
+        await interaction.edit_original_response(
+            embed=discord.Embed().set_image(
+                url=BLIND_BOX_FRAMES[3]
+            ),
+        )
+
+        await asyncio.sleep(5)
 
         image = await create_blind_box_display(
             cards
@@ -886,4 +897,4 @@ async def setup(bot: commands.Bot):
 
     await bot.add_cog(
         Rewards(bot)
-                       )
+        )
