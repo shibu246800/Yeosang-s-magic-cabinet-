@@ -31,6 +31,8 @@ WEEKLY_HEADER_URL = (
 
 WEEKLY_GUARANTEED_GLIMMERS = 10_000
 
+WEEKLY_GRAND_GLIMMERS = 25_000
+
 WEEKLY_RESET_DAYS = 7
 
 
@@ -68,6 +70,7 @@ EASY_TASKS = [
     },
 ]
 
+
 MEDIUM_TASKS = [
     {
         "id": "collect_new_cards",
@@ -97,6 +100,7 @@ MEDIUM_TASKS = [
         "reward_max": 12000,
     },
 ]
+
 
 HARD_TASKS = [
     {
@@ -205,11 +209,11 @@ def choose_difficulty_pool():
 
 
 def generate_tasks():
-    tasks = []
+    selected_tasks = []
 
     attempts = 0
 
-    while len(tasks) < 3 and attempts < 100:
+    while len(selected_tasks) < 3 and attempts < 100:
         attempts += 1
 
         pool = choose_difficulty_pool()
@@ -218,7 +222,7 @@ def generate_tasks():
 
         if template["id"] in {
             task["id"]
-            for task in tasks
+            for task in selected_tasks
         }:
             continue
 
@@ -246,9 +250,9 @@ def generate_tasks():
             amount=task["amount"]
         )
 
-        tasks.append(task)
+        selected_tasks.append(task)
 
-    return tasks
+    return selected_tasks
 
 
 # ---------------------------------------------------------
@@ -284,7 +288,7 @@ def is_new_week(week_started: str) -> bool:
 
 
 def create_new_week(user_id: int):
-    tasks = generate_tasks()
+    selected_tasks = generate_tasks()
 
     now = datetime.now(timezone.utc).isoformat()
 
@@ -317,11 +321,11 @@ def create_new_week(user_id: int):
             (
                 user_id,
                 now,
-                json.dumps(tasks),
+                json.dumps(selected_tasks),
             ),
         )
 
-        for task in tasks:
+        for task in selected_tasks:
             connection.execute(
                 """
                 INSERT INTO weekly_progress (
@@ -340,7 +344,7 @@ def create_new_week(user_id: int):
 
         connection.commit()
 
-    return tasks
+    return selected_tasks
 
 
 def get_current_tasks(user_id: int):
@@ -432,7 +436,7 @@ def difficulty_emote(difficulty: str) -> str:
 
 def build_weekly_embed(
     user_id: int,
-    tasks: list,
+    selected_tasks: list,
 ) -> discord.Embed:
     completed = completed_task_count(user_id)
 
@@ -444,7 +448,10 @@ def build_weekly_embed(
         "-# full weekly reward.\n\n"
     )
 
-    for index, task in enumerate(tasks, start=1):
+    for index, task in enumerate(
+        selected_tasks,
+        start=1,
+    ):
         progress = get_task_progress(
             user_id,
             task["id"],
@@ -523,12 +530,51 @@ class Weekly(commands.Cog):
             if channel is None:
                 continue
 
-            tasks = get_current_tasks(user_id)
+            # -------------------------------------------------
+            # FULL 3/3 WEEKLY COMPLETION
+            # -------------------------------------------------
+
+            if task_id == "__weekly_complete__":
+                embed = discord.Embed(
+                    description=(
+                        f"<@{user_id}>\n\n"
+                        "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
+                        "**WEEKLY CHALLENGE COMPLETE!** ✦\n\n"
+                        "**3 / 3 challenges completed** ✓\n\n"
+                        f"+ **{WEEKLY_GRAND_GLIMMERS:,}** "
+                        f"{GLIMMER_EMOTE}\n"
+                        "🃏 **1 New Epic Card**\n"
+                        "📦 **1 Blind Box**\n\n"
+                        "-# ✧ Your full weekly reward is waiting.\n"
+                        "-# ✧ Use `/rewards` to claim everything.\n\n"
+                        "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
+                    ),
+                    color=EMBED_COLOR,
+                )
+
+                await channel.send(
+                    content=f"<@{user_id}>",
+                    embed=embed,
+                )
+
+                mark_notification_sent(
+                    notification_id
+                )
+
+                continue
+
+            # -------------------------------------------------
+            # INDIVIDUAL TASK COMPLETION
+            # -------------------------------------------------
+
+            selected_tasks = get_current_tasks(
+                user_id
+            )
 
             task = next(
                 (
                     item
-                    for item in tasks
+                    for item in selected_tasks
                     if item["id"] == task_id
                 ),
                 None,
@@ -564,7 +610,7 @@ class Weekly(commands.Cog):
                     "-# ✧ Use `/rewards` to view "
                     "your waiting rewards.\n"
                     "-# ✧ Claim them with the "
-                    "button below.\n\n"
+                    "button in `/rewards`.\n\n"
                     "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
                 ),
                 color=EMBED_COLOR,
@@ -599,15 +645,22 @@ class Weekly(commands.Cog):
 
         existing = get_weekly_data(user_id)
 
-        if existing is None or is_new_week(existing[0]):
-            tasks = create_new_week(user_id)
+        if (
+            existing is None
+            or is_new_week(existing[0])
+        ):
+            selected_tasks = create_new_week(
+                user_id
+            )
 
             add_glimmers(
                 user_id,
                 WEEKLY_GUARANTEED_GLIMMERS,
             )
         else:
-            tasks = get_current_tasks(user_id)
+            selected_tasks = get_current_tasks(
+                user_id
+            )
 
         save_weekly_channel(
             user_id,
@@ -625,7 +678,7 @@ class Weekly(commands.Cog):
 
         weekly_embed = build_weekly_embed(
             user_id,
-            tasks,
+            selected_tasks,
         )
 
         await interaction.response.send_message(
