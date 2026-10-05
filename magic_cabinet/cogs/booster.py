@@ -21,7 +21,9 @@ HEADER_URL = (
 )
 
 BOOSTER_DURATION = timedelta(hours=24)
+
 MAX_DAILY_ACTIVATIONS = 2
+
 
 BOOSTERS = {
     "sunflare": {
@@ -71,12 +73,28 @@ def initialize_booster_database():
                 user_id INTEGER NOT NULL,
                 booster_id TEXT NOT NULL,
                 received_at TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'daily',
                 activated_at TEXT,
                 expires_at TEXT,
                 uses_remaining INTEGER
             )
             """
         )
+
+        columns = [
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(booster_tickets)"
+            ).fetchall()
+        ]
+
+        if "source" not in columns:
+            connection.execute(
+                """
+                ALTER TABLE booster_tickets
+                ADD COLUMN source TEXT NOT NULL DEFAULT 'daily'
+                """
+            )
 
         connection.execute(
             """
@@ -85,10 +103,26 @@ def initialize_booster_database():
                 user_id INTEGER NOT NULL,
                 ticket_id INTEGER NOT NULL,
                 booster_id TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'daily',
                 activated_at TEXT NOT NULL
             )
             """
         )
+
+        columns = [
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(booster_activation_log)"
+            ).fetchall()
+        ]
+
+        if "source" not in columns:
+            connection.execute(
+                """
+                ALTER TABLE booster_activation_log
+                ADD COLUMN source TEXT NOT NULL DEFAULT 'daily'
+                """
+            )
 
         connection.commit()
 
@@ -134,9 +168,10 @@ def purchase_booster(
             INSERT INTO booster_tickets (
                 user_id,
                 booster_id,
-                received_at
+                received_at,
+                source
             )
-            VALUES (?, ?, ?)
+            VALUES (?, ?, ?, 'shop')
             """,
             (
                 user_id,
@@ -154,7 +189,7 @@ def get_available_tickets(user_id: int):
     with sqlite3.connect(DATABASE) as connection:
         return connection.execute(
             """
-            SELECT ticket_id, booster_id
+            SELECT ticket_id, booster_id, source
             FROM booster_tickets
             WHERE user_id = ?
             AND activated_at IS NULL
@@ -170,7 +205,12 @@ def get_active_boosters(user_id: int):
     with sqlite3.connect(DATABASE) as connection:
         return connection.execute(
             """
-            SELECT ticket_id, booster_id, expires_at, uses_remaining
+            SELECT
+                ticket_id,
+                booster_id,
+                source,
+                expires_at,
+                uses_remaining
             FROM booster_tickets
             WHERE user_id = ?
             AND activated_at IS NOT NULL
@@ -181,7 +221,10 @@ def get_active_boosters(user_id: int):
         ).fetchall()
 
 
-def get_daily_activation_count(user_id: int) -> int:
+def get_daily_source_activation_count(
+    user_id: int,
+    source: str,
+) -> int:
     today = datetime.now(timezone.utc).date().isoformat()
 
     with sqlite3.connect(DATABASE) as connection:
@@ -190,9 +233,14 @@ def get_daily_activation_count(user_id: int) -> int:
             SELECT COUNT(*)
             FROM booster_activation_log
             WHERE user_id = ?
+            AND source = ?
             AND substr(activated_at, 1, 10) = ?
             """,
-            (user_id, today),
+            (
+                user_id,
+                source,
+                today,
+            ),
         ).fetchone()
 
     return 0 if row is None else row[0]
@@ -202,6 +250,7 @@ def activate_ticket(
     ticket_id: int,
     user_id: int,
     booster_id: str,
+    source: str,
 ):
     now = datetime.now(timezone.utc)
     expires_at = now + BOOSTER_DURATION
@@ -217,6 +266,7 @@ def activate_ticket(
             WHERE ticket_id = ?
             AND user_id = ?
             AND booster_id = ?
+            AND source = ?
             AND activated_at IS NULL
             """,
             (
@@ -226,6 +276,7 @@ def activate_ticket(
                 ticket_id,
                 user_id,
                 booster_id,
+                source,
             ),
         )
 
@@ -239,14 +290,16 @@ def activate_ticket(
                 user_id,
                 ticket_id,
                 booster_id,
+                source,
                 activated_at
             )
-            VALUES (?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?)
             """,
             (
                 user_id,
                 ticket_id,
                 booster_id,
+                source,
                 now.isoformat(),
             ),
         )
@@ -311,7 +364,10 @@ class ConfirmPurchaseView(discord.ui.View):
                 f"{booster['emote']} **{booster['name']}**\n\n"
                 f"Your {booster['emote']} **{booster['name']}** "
                 "has been successfully bought.\n\n"
-                "Use `/activate boost` to use it."
+                "✦ This booster is valid for **24 hours** "
+                "once activated.\n\n"
+                "✦ Bought boosters can be stacked.\n\n"
+                "To activate the booster, use `/activate boost`."
             ),
             color=EMBED_COLOR,
         )
@@ -353,6 +409,8 @@ class ShopButton(discord.ui.Button):
                 f"{booster['description']}\n\n"
                 f"{GLIMMER_EMOTE} **Price:** "
                 f"**{booster['price']:,}**\n\n"
+                "✦ Valid for **24 hours** once activated.\n"
+                "✦ Bought boosters can be stacked.\n\n"
                 "Are you sure you want to purchase "
                 "this Booster Ticket?"
             ),
@@ -383,10 +441,14 @@ class ShopView(discord.ui.View):
 
 
 class ActivateView(discord.ui.View):
-    def __init__(self, user_id: int, tickets: list):
+    def __init__(
+        self,
+        user_id: int,
+        tickets: list,
+    ):
         super().__init__(timeout=60)
 
-        for ticket_id, booster_id in tickets:
+        for ticket_id, booster_id, source in tickets:
             booster = BOOSTERS.get(booster_id)
 
             if booster is None:
@@ -402,21 +464,30 @@ class ActivateView(discord.ui.View):
                 interaction: discord.Interaction,
                 ticket_id=ticket_id,
                 booster_id=booster_id,
+                source=source,
             ):
                 if interaction.user.id != user_id:
                     return
 
-                daily_count = get_daily_activation_count(
-                    user_id
+                source_count = get_daily_source_activation_count(
+                    user_id,
+                    source,
                 )
 
-                if daily_count >= MAX_DAILY_ACTIVATIONS:
+                if source_count >= 1:
+                    if source == "daily":
+                        message = (
+                            "✦ You have already activated "
+                            "your daily Booster today."
+                        )
+                    else:
+                        message = (
+                            "✦ You have already activated "
+                            "a bought Booster today."
+                        )
+
                     embed = discord.Embed(
-                        description=(
-                            "✦ **Daily Booster Limit Reached**\n\n"
-                            "You can activate a maximum of "
-                            "**2 boosters per day**."
-                        ),
+                        description=message,
                         color=EMBED_COLOR,
                     )
 
@@ -426,13 +497,25 @@ class ActivateView(discord.ui.View):
                     )
                     return
 
-                active = get_active_boosters(user_id)
+                total_count = (
+                    get_daily_source_activation_count(
+                        user_id,
+                        "daily",
+                    )
+                    + get_daily_source_activation_count(
+                        user_id,
+                        "shop",
+                    )
+                )
 
-                if active:
+                if total_count >= MAX_DAILY_ACTIVATIONS:
                     embed = discord.Embed(
                         description=(
-                            "✦ **Booster Already Active**\n\n"
-                            "You already have an active booster."
+                            "✦ **Daily Booster Limit Reached**\n\n"
+                            "You can activate a maximum of "
+                            "**2 boosters per day**.\n\n"
+                            "✦ One daily Booster\n"
+                            "✦ One bought Booster"
                         ),
                         color=EMBED_COLOR,
                     )
@@ -447,9 +530,22 @@ class ActivateView(discord.ui.View):
                     ticket_id,
                     user_id,
                     booster_id,
+                    source,
                 )
 
                 if expires_at is None:
+                    embed = discord.Embed(
+                        description=(
+                            "✦ This Booster Ticket is no longer "
+                            "available for activation."
+                        ),
+                        color=EMBED_COLOR,
+                    )
+
+                    await interaction.response.edit_message(
+                        embed=embed,
+                        view=None,
+                    )
                     return
 
                 booster = BOOSTERS[booster_id]
@@ -459,9 +555,10 @@ class ActivateView(discord.ui.View):
                         f"{booster['emote']} "
                         f"**{booster['name']} ACTIVATED**\n\n"
                         f"{booster['description']}\n\n"
-                        "✦ Active for **24 hours**.\n\n"
-                        f"✦ Daily activations: "
-                        f"**{daily_count + 1}/2**"
+                        "✦ Active for **24 hours**.\n"
+                        "✦ Bought boosters can stack.\n\n"
+                        f"✦ Activations today: "
+                        f"**{total_count + 1}/2**"
                     ),
                     color=EMBED_COLOR,
                 )
@@ -491,8 +588,11 @@ class Booster(commands.GroupCog, name="booster"):
         description = (
             "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
             "**Booster Tickets**\n\n"
-            "-# ✧ Each booster activates for 24 hours.\n"
+            "-# ✧ Each booster is valid for 24 hours "
+            "once activated.\n"
             "-# ✧ You can activate **2 boosters per day**.\n"
+            "-# ✧ One daily Booster + one bought Booster.\n"
+            "-# ✧ Bought boosters can be stacked.\n"
             "-# ✧ Buying a ticket does not activate it.\n\n"
         )
 
@@ -514,48 +614,52 @@ class Booster(commands.GroupCog, name="booster"):
         header.set_image(url=HEADER_URL)
 
         await interaction.response.send_message(
-            embeds=[header, embed],
-            view=ShopView(interaction.user.id),
+            embeds=[
+                header,
+                embed,
+            ],
+            view=ShopView(
+                interaction.user.id
+            ),
         )
 
+
+class Activate(commands.GroupCog, name="activate"):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        initialize_booster_database()
+
     @app_commands.command(
-        name="activate",
+        name="boost",
         description="Activate one of your Booster Tickets.",
     )
-    async def activate(
+    async def boost(
         self,
         interaction: discord.Interaction,
     ):
         user_id = interaction.user.id
 
-        daily_count = get_daily_activation_count(user_id)
+        daily_count = get_daily_source_activation_count(
+            user_id,
+            "daily",
+        )
 
-        if daily_count >= MAX_DAILY_ACTIVATIONS:
+        shop_count = get_daily_source_activation_count(
+            user_id,
+            "shop",
+        )
+
+        total_count = daily_count + shop_count
+
+        if total_count >= MAX_DAILY_ACTIVATIONS:
             embed = discord.Embed(
                 description=(
                     "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
                     "**Daily Booster Limit Reached**\n\n"
                     "You have already activated "
                     "**2 boosters today**.\n\n"
-                    "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
-                ),
-                color=EMBED_COLOR,
-            )
-
-            await interaction.response.send_message(
-                embed=embed,
-                ephemeral=True,
-            )
-            return
-
-        active = get_active_boosters(user_id)
-
-        if active:
-            embed = discord.Embed(
-                description=(
-                    "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
-                    "**Booster Already Active**\n\n"
-                    "You already have an active booster.\n\n"
+                    "✦ One daily Booster\n"
+                    "✦ One bought Booster\n\n"
                     "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
                 ),
                 color=EMBED_COLOR,
@@ -575,7 +679,50 @@ class Booster(commands.GroupCog, name="booster"):
                     "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
                     f"{GLIMMER_EMOTE} **No Booster Tickets**\n\n"
                     "You don't have a Booster Ticket waiting.\n\n"
-                    "✧ Use `/daily` or visit `/booster shop`.\n\n"
+                    "✧ Use `/daily` to receive one.\n"
+                    "✧ Or visit `/booster shop` to buy one.\n\n"
+                    "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
+                ),
+                color=EMBED_COLOR,
+            )
+
+            await interaction.response.send_message(
+                embed=embed,
+                ephemeral=True,
+            )
+            return
+
+        available_buttons = []
+
+        for ticket_id, booster_id, source in tickets:
+            source_count = get_daily_source_activation_count(
+                user_id,
+                source,
+            )
+
+            if source_count >= 1:
+                continue
+
+            booster = BOOSTERS.get(booster_id)
+
+            if booster is None:
+                continue
+
+            available_buttons.append(
+                (
+                    ticket_id,
+                    booster_id,
+                    source,
+                )
+            )
+
+        if not available_buttons:
+            embed = discord.Embed(
+                description=(
+                    "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
+                    "**No Booster Available**\n\n"
+                    "You have already used the available "
+                    "daily/shop Booster activation for today.\n\n"
                     "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
                 ),
                 color=EMBED_COLOR,
@@ -592,8 +739,10 @@ class Booster(commands.GroupCog, name="booster"):
                 "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
                 "**Choose a Booster**\n\n"
                 "Select the Booster Ticket you want to activate.\n\n"
-                f"✦ Daily activations: "
-                f"**{daily_count}/2**\n\n"
+                "✦ Active for **24 hours**.\n"
+                "✦ Bought boosters can be stacked.\n\n"
+                f"✦ Activations today: "
+                f"**{total_count}/2**\n\n"
                 "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
             ),
             color=EMBED_COLOR,
@@ -603,7 +752,7 @@ class Booster(commands.GroupCog, name="booster"):
             embed=embed,
             view=ActivateView(
                 user_id,
-                tickets,
+                available_buttons,
             ),
             ephemeral=True,
         )
@@ -613,3 +762,7 @@ async def setup(bot: commands.Bot):
     await bot.add_cog(
         Booster(bot)
     )
+
+    await bot.add_cog(
+        Activate(bot)
+            )
