@@ -80,10 +80,7 @@ class Purse(commands.Cog):
 
         profile_embed = discord.Embed(
             description=(
-                "╭────────────── ✦ ──────────────╮\n"
-                "                  **YOUR PURSE**\n"
-                "╰────────────── ✦ ──────────────╯\n\n"
-                f"{GLIMMER_EMOTE} **Glimmers**\n"
+                " f"{GLIMMER_EMOTE} **Glimmers**\n"
                 f"**{glimmers:,}** {GLIMMER_EMOTE}"
             ),
             color=EMBED_COLOR,
