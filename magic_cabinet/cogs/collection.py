@@ -1,4 +1,4 @@
-"""Collection layout test."""
+"""Collection 3x3 grid test."""
 
 import discord
 from discord import app_commands
@@ -12,51 +12,70 @@ COVER_URL = (
     "grok_1791211167707.jpg"
 )
 
+RED_DOT = "<a:reddot:1556245637425533048>"
+
 
 class Collection(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(
-        name="collection",
-        description="Test collection layout.",
-    )
-    async def collection(self, interaction: discord.Interaction):
+    def make_tile(self, number: int):
+        container = discord.ui.Container()
 
-        view = discord.ui.LayoutView()
+        container.add_item(
+            discord.ui.MediaGallery(
+                discord.ui.MediaGalleryItem(
+                    media=COVER_URL,
+                    description="Royal Court",
+                )
+            )
+        )
 
-        container = discord.ui.Container(
-            discord.ui.Section(
-                discord.ui.TextDisplay(
-                    "### 𝑹𝒐𝒚𝒂𝒍 𝑪𝒐𝒖𝒓𝒕\n"
-                    "`BB_1` • 🌙 Velvet Moon"
-                ),
-                accessory=discord.ui.Thumbnail(
-                    COVER_URL
-                ),
-            ),
+        container.add_item(
+            discord.ui.TextDisplay(
+                f"**𝑹𝒐𝒚𝒂𝒍 𝑪𝒐𝒖𝒓𝒕**\n"
+                f"`BB_1` • 🌙"
+            )
         )
 
         button = discord.ui.Button(
-            emoji="<a:reddot:1556245637425533048>",
+            emoji=RED_DOT,
             style=discord.ButtonStyle.secondary,
         )
 
-        async def button_callback(
-            button_interaction: discord.Interaction,
+        async def callback(
+            interaction: discord.Interaction,
         ):
-            await button_interaction.response.send_message(
-                "Royal Court button works!",
+            await interaction.response.send_message(
+                f"Royal Court {number} clicked!",
                 ephemeral=True,
             )
 
-        button.callback = button_callback
+        button.callback = callback
 
         container.add_item(
             discord.ui.ActionRow(button)
         )
 
-        view.add_item(container)
+        return container
+
+    @app_commands.command(
+        name="collection",
+        description="Browse collections.",
+    )
+    async def collection(
+        self,
+        interaction: discord.Interaction,
+    ):
+        view = discord.ui.LayoutView()
+
+        for row in range(3):
+            for column in range(3):
+                view.add_item(
+                    self.make_tile(
+                        row * 3 + column + 1
+                    )
+                )
 
         await interaction.response.send_message(
             view=view
