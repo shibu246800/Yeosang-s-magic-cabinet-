@@ -31,6 +31,20 @@ def initialize_tracker_database():
             """
         )
 
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS weekly_pending_rewards (
+                reward_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                reward_type TEXT NOT NULL,
+                amount INTEGER NOT NULL DEFAULT 0,
+                task_id TEXT,
+                claimed INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+
         connection.commit()
 
 
@@ -57,6 +71,35 @@ def save_weekly_channel(
                 user_id,
                 guild_id,
                 channel_id,
+            ),
+        )
+
+        connection.commit()
+
+
+def add_weekly_reward(
+    user_id: int,
+    task_id: str,
+    amount: int,
+):
+    with sqlite3.connect(DATABASE) as connection:
+        connection.execute(
+            """
+            INSERT INTO weekly_pending_rewards (
+                user_id,
+                reward_type,
+                amount,
+                task_id,
+                claimed,
+                created_at
+            )
+            VALUES (?, 'task_glimmers', ?, ?, 0, ?)
+            """,
+            (
+                user_id,
+                amount,
+                task_id,
+                datetime.now(timezone.utc).isoformat(),
             ),
         )
 
@@ -149,6 +192,33 @@ def record_weekly_progress(
                     """,
                     (
                         user_id,
+                        task_id,
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+
+                connection.execute(
+                    """
+                    INSERT INTO weekly_pending_rewards (
+                        user_id,
+                        reward_type,
+                        amount,
+                        task_id,
+                        claimed,
+                        created_at
+                    )
+                    VALUES (
+                        ?,
+                        'task_glimmers',
+                        ?,
+                        ?,
+                        0,
+                        ?
+                    )
+                    """,
+                    (
+                        user_id,
+                        task["reward"],
                         task_id,
                         datetime.now(timezone.utc).isoformat(),
                     ),
