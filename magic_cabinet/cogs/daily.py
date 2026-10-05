@@ -20,7 +20,7 @@ EMBED_COLOR = discord.Color.from_str("#4E0017")
 GLIMMER_EMOTE = "<:glimmer:1554842064464773172>"
 BOOSTER_EMOTE = "<a:heartpotion:1556018680972714095>"
 
-DAILY_Glimmers = 1000
+DAILY_GLIMMERS = 1000
 DAILY_COOLDOWN = 24 * 60 * 60
 
 HEADER_URL = (
@@ -36,7 +36,6 @@ DIVIDER_URL = (
     "refs/heads/main/magic_cabinet/cogs/profile/"
     "Untitled14_20261003173415.jpg"
 )
-
 
 BOOSTERS = [
     {
@@ -68,8 +67,6 @@ BOOSTERS = [
 
 
 def initialize_daily_database():
-    """Create daily reward and booster ticket tables."""
-
     with sqlite3.connect(DATABASE) as connection:
         connection.execute(
             """
@@ -97,8 +94,6 @@ def initialize_daily_database():
 
 
 def is_registered(user_id: int) -> bool:
-    """Check whether the player has awakened their Cabinet."""
-
     with sqlite3.connect(DATABASE) as connection:
         row = connection.execute(
             """
@@ -113,8 +108,6 @@ def is_registered(user_id: int) -> bool:
 
 
 def get_daily_claim(user_id: int):
-    """Return the player's last daily claim."""
-
     with sqlite3.connect(DATABASE) as connection:
         return connection.execute(
             """
@@ -127,8 +120,6 @@ def get_daily_claim(user_id: int):
 
 
 def get_glimmers(user_id: int) -> int:
-    """Return the player's current Glimmer balance."""
-
     with sqlite3.connect(DATABASE) as connection:
         row = connection.execute(
             """
@@ -143,8 +134,6 @@ def get_glimmers(user_id: int) -> int:
 
 
 def add_glimmers(user_id: int, amount: int):
-    """Add Glimmers to the player's balance."""
-
     with sqlite3.connect(DATABASE) as connection:
         connection.execute(
             """
@@ -159,16 +148,10 @@ def add_glimmers(user_id: int, amount: int):
             """,
             (user_id, amount),
         )
-
         connection.commit()
 
 
-def get_card_quantity(
-    user_id: int,
-    card_id: int,
-) -> int:
-    """Return the player's current quantity of a card."""
-
+def get_card_quantity(user_id: int, card_id: int) -> int:
     with sqlite3.connect(DATABASE) as connection:
         row = connection.execute(
             """
@@ -187,13 +170,6 @@ def add_card_to_bag(
     user_id: int,
     card_id: int,
 ) -> tuple[int, bool]:
-    """
-    Add one card to the player's Bag.
-
-    Returns:
-        (new_quantity, was_new_card)
-    """
-
     with sqlite3.connect(DATABASE) as connection:
         row = connection.execute(
             """
@@ -217,7 +193,6 @@ def add_card_to_bag(
                 """,
                 (user_id, card_id),
             )
-
             connection.commit()
             return 1, True
 
@@ -243,15 +218,6 @@ def add_card_to_bag(
 
 
 def choose_daily_card() -> dict:
-    """
-    Choose one random card.
-
-    Daily pool:
-    Normal + Rare + Epic.
-
-    Limited and Legendary are never included.
-    """
-
     card_pool = (
         NORMAL_CARDS
         + RARE_CARDS
@@ -259,16 +225,12 @@ def choose_daily_card() -> dict:
     )
 
     if not card_pool:
-        raise RuntimeError(
-            "The daily card pool is empty."
-        )
+        raise RuntimeError("The daily card pool is empty.")
 
     return random.choice(card_pool)
 
 
 def choose_booster() -> dict:
-    """Choose one random Booster Ticket."""
-
     return random.choice(BOOSTERS)
 
 
@@ -276,8 +238,6 @@ def save_daily_claim(
     user_id: int,
     claim_time: datetime,
 ):
-    """Save the player's latest daily claim."""
-
     with sqlite3.connect(DATABASE) as connection:
         connection.execute(
             """
@@ -304,8 +264,6 @@ def save_booster_ticket(
     booster_id: str,
     received_at: datetime,
 ):
-    """Store a Booster Ticket without activating it."""
-
     with sqlite3.connect(DATABASE) as connection:
         connection.execute(
             """
@@ -327,8 +285,6 @@ def save_booster_ticket(
 
 
 def format_remaining(seconds: int) -> str:
-    """Format remaining cooldown time."""
-
     hours = seconds // 3600
     minutes = (seconds % 3600) // 60
 
@@ -339,8 +295,6 @@ def format_remaining(seconds: int) -> str:
 
 
 class Daily(commands.Cog):
-    """Daily Magic Cabinet rewards."""
-
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         initialize_daily_database()
@@ -353,18 +307,15 @@ class Daily(commands.Cog):
         self,
         interaction: discord.Interaction,
     ):
-        """Give the player their daily bundle."""
-
         user_id = interaction.user.id
 
         if not is_registered(user_id):
             embed = discord.Embed(
                 description=(
-                    "╭────────────── ✦ ──────────────╮\n"
-                    "              **MAGIC CABINET**\n"
-                    "╰────────────── ✦ ──────────────╯\n\n"
+                    "✦ ────── ⋆⋅☆⋅⋆ ────── ✦\n\n"
                     "You haven't awakened your Cabinet yet.\n\n"
-                    "-# ✦ Use `/magic awaken` to begin."
+                    "✦ Use `/magic awaken` to begin.\n\n"
+                    "✦ ────── ⋆⋅☆⋅⋆ ────── ✦"
                 ),
                 color=EMBED_COLOR,
             )
@@ -373,7 +324,6 @@ class Daily(commands.Cog):
                 embed=embed,
                 ephemeral=True,
             )
-
             return
 
         now = datetime.now(timezone.utc)
@@ -396,13 +346,12 @@ class Daily(commands.Cog):
 
                 embed = discord.Embed(
                     description=(
-                        "╭────────────── ✦ ──────────────╮\n"
-                        "                **DAILY REWARDS**\n"
-                        "╰────────────── ✦ ──────────────╯\n\n"
+                        "✦ ────── ⋆⋅☆⋅⋆ ────── ✦\n\n"
                         "The Cabinet has already left "
                         "today's gifts.\n\n"
                         "Come back when the next day opens.\n\n"
-                        f"-# ✦ Next daily available in **{remaining}**."
+                        f"✦ ── **{remaining}** remaining ── ✦\n\n"
+                        "✦ ────── ⋆⋅☆⋅⋆ ────── ✦"
                     ),
                     color=EMBED_COLOR,
                 )
@@ -411,16 +360,10 @@ class Daily(commands.Cog):
                     embed=embed,
                     ephemeral=True,
                 )
-
                 return
 
         card = choose_daily_card()
         booster = choose_booster()
-
-        previous_quantity = get_card_quantity(
-            user_id,
-            card["id"],
-        )
 
         new_quantity, was_new = add_card_to_bag(
             user_id,
@@ -429,7 +372,7 @@ class Daily(commands.Cog):
 
         add_glimmers(
             user_id,
-            DAILY_Glimmers,
+            DAILY_GLIMMERS,
         )
 
         save_booster_ticket(
@@ -443,43 +386,48 @@ class Daily(commands.Cog):
             now,
         )
 
-        new_balance = get_glimmers(user_id)
-
         if was_new:
-            card_status = "You got a new card!"
+            card_status = "✦ **New card added to your Bag!**"
         else:
             card_status = (
-                f"You now have **{new_quantity}** copies!\n"
-                "You got a dupie!"
+                f"✦ **Duplicate!** You now have "
+                f"**{new_quantity}** copies."
             )
 
-        card_link = card.get("image", "")
+        collection = card.get(
+            "collection_id",
+            "Unknown",
+        )
 
-        if card_link:
-            card_line = f"[View Card]({card_link})"
-        else:
-            card_line = "Card received"
+        rarity = card.get(
+            "stars",
+            "★",
+        )
 
-        success_text = (
-            "╭────────────── ✦ ──────────────╮\n"
-            "                **DAILY REWARDS**\n"
-            "╰────────────── ✦ ──────────────╯\n\n"
-            f"🎴 **Daily Card**\n"
-            f"{card_line}\n"
-            f"-# ☆ Card ID: `{card['id']}` ☆ "
-            f"Collection ID: `{card['collection_id']}` ☆ "
-            f"{card['stars']}\n"
-            f"{card_status}\n\n"
-            f"{BOOSTER_EMOTE} **Booster Ticket**\n"
-            f"**{booster['name']}**\n"
-            f"-# {booster['description']}\n"
-            "-# ✦ The booster is not active yet. "
-            "Use `/activate boost` when you are ready.\n\n"
-            f"{GLIMMER_EMOTE} **Glimmers**\n"
-            f"+**{DAILY_Glimmers:,}** {GLIMMER_EMOTE}\n"
-            f"**New balance:** {new_balance:,} {GLIMMER_EMOTE}\n\n"
-            "-# ✦ Your next `/daily` will be available "
-            "after 24 hours."
+        reward_embed = discord.Embed(
+            description=(
+                "✦ ────── ⋆⋅☆⋅⋆ ────── ✦\n\n"
+                "🎴 **Daily Card**\n\n"
+                f"{rarity}  •  `{collection}`\n"
+                f"✦ Card ID: `{card['id']}` ✦\n\n"
+                f"{card_status}\n\n"
+                "╰─ ⋆⋅☆⋅⋆ ─╯\n\n"
+                f"{BOOSTER_EMOTE} **Booster Ticket**\n"
+                f"✦ **{booster['name']}**\n"
+                f"-# {booster['description']}\n"
+                "-# ✧ Ticket received. It is not active yet.\n"
+                "-# ✦ Use `/activate boost` whenever you wish.\n\n"
+                "╰─ ⋆⋅☆⋅⋆ ─╯\n\n"
+                f"{GLIMMER_EMOTE} **Glimmers**\n"
+                f"✦ +**{DAILY_GLIMMERS:,}** {GLIMMER_EMOTE}\n\n"
+                "✦ ────── ⋆⋅☆⋅⋆ ────── ✦\n"
+                "-# ✧ Return after **24 hours** for your next gift."
+            ),
+            color=EMBED_COLOR,
+        )
+
+        reward_embed.set_image(
+            url=card["image"]
         )
 
         header_embed = discord.Embed(
@@ -487,11 +435,6 @@ class Daily(commands.Cog):
         )
         header_embed.set_image(
             url=HEADER_URL
-        )
-
-        reward_embed = discord.Embed(
-            description=success_text,
-            color=EMBED_COLOR,
         )
 
         divider_embed = discord.Embed(
@@ -510,9 +453,5 @@ class Daily(commands.Cog):
         )
 
 
-async def setup(
-    bot: commands.Bot,
-):
-    await bot.add_cog(
-        Daily(bot)
-      )
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Daily(bot))
