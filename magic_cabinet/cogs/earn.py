@@ -7,6 +7,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from magic_cabinet.weekly_tracker import record_weekly_progress
+
 
 DATABASE = "cabinet.db"
 
@@ -216,6 +218,12 @@ class Earn(commands.Cog):
 
         new_balance = add_glimmers(
             user_id,
+            earning_amount,
+        )
+
+        record_weekly_progress(
+            user_id,
+            "glimmers_earned",
             earning_amount,
         )
 
