@@ -83,34 +83,41 @@ class CollectionView(discord.ui.LayoutView):
             )
         )
 
-        # Collection entries
-        for name, collection_id in COLLECTIONS:
-
-            button = discord.ui.Button(
-                emoji=RED_DOT,
-                style=discord.ButtonStyle.secondary,
+        # Book cover
+        container.add_item(
+            discord.ui.MediaGallery(
+                discord.MediaGalleryItem(
+                    "attachment://collection_book.png",
+                ),
             )
+        )
 
-            async def callback(
-                interaction: discord.Interaction,
-                name=name,
-                collection_id=collection_id,
-            ):
-                await interaction.response.send_message(
-                    f"**{name}**\n`{collection_id}`",
-                    ephemeral=True,
+        # Collection buttons
+        for row_start in range(0, len(COLLECTIONS), 3):
+            row = discord.ui.ActionRow()
+
+            for name, collection_id in COLLECTIONS[
+                row_start:row_start + 3
+            ]:
+                button = discord.ui.Button(
+                    emoji=RED_DOT,
+                    style=discord.ButtonStyle.secondary,
                 )
 
-            button.callback = callback
+                async def callback(
+                    interaction: discord.Interaction,
+                    name=name,
+                    collection_id=collection_id,
+                ):
+                    await interaction.response.send_message(
+                        f"**{name}**\n`{collection_id}`",
+                        ephemeral=True,
+                    )
 
-            section = discord.ui.Section(
-                discord.ui.TextDisplay(
-                    f"**{name}**\n`{collection_id}`"
-                ),
-                accessory=button,
-            )
+                button.callback = callback
+                row.add_item(button)
 
-            container.add_item(section)
+            container.add_item(row)
 
         self.add_item(container)
 
@@ -129,9 +136,11 @@ class Collection(commands.Cog):
     ):
         file = await make_book()
 
+        view = CollectionView()
+
         await interaction.response.send_message(
             file=file,
-            view=CollectionView(),
+            view=view,
         )
 
 
