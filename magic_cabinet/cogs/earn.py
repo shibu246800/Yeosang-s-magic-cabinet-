@@ -3,13 +3,12 @@
 import sqlite3
 from datetime import datetime, timezone
 
-
-DATABASE = "cabinet.db"
-
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+
+DATABASE = "cabinet.db"
 
 EMBED_COLOR = discord.Color.from_str("#4E0017")
 GLIMMER_EMOTE = "<:glimmer:1554842064464773172>"
@@ -241,7 +240,7 @@ class Earn(commands.Cog):
         embed = discord.Embed(
             description=(
                 "╭────────────── ✦ ──────────────╮\n"
-                 f"You earned **{earning_amount}** "
+                f"You earned **{earning_amount}** "
                 f"{GLIMMER_EMOTE} Glimmers!\n\n"
                 f"**New balance:** {new_balance:,} "
                 f"{GLIMMER_EMOTE}\n\n"
