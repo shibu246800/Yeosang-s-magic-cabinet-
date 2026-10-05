@@ -91,32 +91,6 @@ def get_glimmers(user_id: int) -> int:
     return row[0]
 
 
-def add_booster_ticket(
-    user_id: int,
-    booster_id: str,
-):
-    now = datetime.now(timezone.utc)
-
-    with sqlite3.connect(DATABASE) as connection:
-        connection.execute(
-            """
-            INSERT INTO booster_tickets (
-                user_id,
-                booster_id,
-                received_at
-            )
-            VALUES (?, ?, ?)
-            """,
-            (
-                user_id,
-                booster_id,
-                now.isoformat(),
-            ),
-        )
-
-        connection.commit()
-
-
 def purchase_booster(
     user_id: int,
     booster_id: str,
@@ -162,36 +136,6 @@ def purchase_booster(
         connection.commit()
 
     return True
-
-
-class BoosterShopView(discord.ui.View):
-    def __init__(self, owner_id: int):
-        super().__init__(timeout=300)
-        self.owner_id = owner_id
-
-    async def interaction_check(
-        self,
-        interaction: discord.Interaction,
-    ) -> bool:
-        if interaction.user.id != self.owner_id:
-            embed = discord.Embed(
-                description=(
-                    "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
-                    "This Booster Shop belongs to another player.\n\n"
-                    "✧ Use `/booster shop` to open your own shop.\n\n"
-                    "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
-                ),
-                color=EMBED_COLOR,
-            )
-
-            await interaction.response.send_message(
-                embed=embed,
-                ephemeral=True,
-            )
-
-            return False
-
-        return True
 
 
 class BuyBoosterView(discord.ui.View):
@@ -286,7 +230,6 @@ class BuyBoosterView(discord.ui.View):
         embed = discord.Embed(
             description=(
                 "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
-                f"{booster['emote']} **{booster['name']}**\n\n"
                 f"Your {booster['emote']} **{booster['name']}** "
                 "has been successfully bought.\n\n"
                 "Use `/activate boost` to use it.\n\n"
@@ -415,7 +358,7 @@ class Booster(commands.GroupCog, name="booster"):
             "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
         )
 
-        embed = discord.Embed(
+        shop_embed = discord.Embed(
             description=description,
             color=EMBED_COLOR,
         )
@@ -431,7 +374,7 @@ class Booster(commands.GroupCog, name="booster"):
         await interaction.response.send_message(
             embeds=[
                 header_embed,
-                embed,
+                shop_embed,
             ],
             view=BoosterShopView(
                 owner_id=interaction.user.id,
@@ -442,4 +385,4 @@ class Booster(commands.GroupCog, name="booster"):
 async def setup(bot: commands.Bot):
     await bot.add_cog(
         Booster(bot)
-  )
+    )
