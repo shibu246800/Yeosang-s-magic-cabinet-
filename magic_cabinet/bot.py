@@ -91,6 +91,10 @@ class MagicCabinetBot(commands.Bot):
         await self.load_extension(
     "magic_cabinet.cogs.bag"
         )
+
+        await self.load_extension(
+    "magic_cabinet.cogs.collection"
+        )
         
         print("=== ALL EXTENSIONS LOADED ===")
 
