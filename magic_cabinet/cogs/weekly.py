@@ -195,7 +195,10 @@ def initialize_weekly_database():
 # GLIMMERS
 # ---------------------------------------------------------
 
-def add_glimmers(user_id: int, amount: int):
+def add_glimmers(
+    user_id: int,
+    amount: int,
+):
     with sqlite3.connect(DATABASE) as connection:
         connection.execute(
             """
@@ -238,17 +241,22 @@ def generate_tasks():
 
     attempts = 0
 
-    while len(selected_tasks) < 3 and attempts < 100:
+    while (
+        len(selected_tasks) < 3
+        and attempts < 100
+    ):
         attempts += 1
 
         pool = choose_difficulty_pool()
 
         template = random.choice(pool)
 
-        if template["stat"] in {
+        used_stats = {
             task["stat"]
             for task in selected_tasks
-        }:
+        }
+
+        if template["stat"] in used_stats:
             continue
 
         task = dict(template)
@@ -263,13 +271,12 @@ def generate_tasks():
             template["reward_max"],
         )
 
-        task["difficulty"] = (
-            "easy"
-            if template in EASY_TASKS
-            else "medium"
-            if template in MEDIUM_TASKS
-            else "hard"
-        )
+        if template in EASY_TASKS:
+            task["difficulty"] = "easy"
+        elif template in MEDIUM_TASKS:
+            task["difficulty"] = "medium"
+        else:
+            task["difficulty"] = "hard"
 
         task["display"] = template["text"].format(
             amount=task["amount"]
@@ -284,7 +291,9 @@ def generate_tasks():
 # WEEKLY CYCLE
 # ---------------------------------------------------------
 
-def get_weekly_data(user_id: int):
+def get_weekly_data(
+    user_id: int,
+):
     with sqlite3.connect(DATABASE) as connection:
         row = connection.execute(
             """
@@ -302,20 +311,33 @@ def get_weekly_data(user_id: int):
     return row
 
 
-def is_new_week(week_started: str) -> bool:
-    started = datetime.fromisoformat(week_started)
+def is_new_week(
+    week_started: str,
+) -> bool:
+    started = datetime.fromisoformat(
+        week_started
+    )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(
+        timezone.utc
+    )
 
-    return now >= started + timedelta(
-        days=WEEKLY_RESET_DAYS
+    return now >= (
+        started
+        + timedelta(
+            days=WEEKLY_RESET_DAYS
+        )
     )
 
 
-def create_new_week(user_id: int):
+def create_new_week(
+    user_id: int,
+):
     selected_tasks = generate_tasks()
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(
+        timezone.utc
+    ).isoformat()
 
     with sqlite3.connect(DATABASE) as connection:
         connection.execute(
@@ -346,7 +368,9 @@ def create_new_week(user_id: int):
             (
                 user_id,
                 now,
-                json.dumps(selected_tasks),
+                json.dumps(
+                    selected_tasks
+                ),
             ),
         )
 
@@ -372,18 +396,28 @@ def create_new_week(user_id: int):
     return selected_tasks
 
 
-def get_current_tasks(user_id: int):
-    row = get_weekly_data(user_id)
+def get_current_tasks(
+    user_id: int,
+):
+    row = get_weekly_data(
+        user_id
+    )
 
     if row is None:
-        return create_new_week(user_id)
+        return create_new_week(
+            user_id
+        )
 
-    week_started = row[0]
+    if is_new_week(
+        row[0]
+    ):
+        return create_new_week(
+            user_id
+        )
 
-    if is_new_week(week_started):
-        return create_new_week(user_id)
-
-    return json.loads(row[1])
+    return json.loads(
+        row[1]
+    )
 
 
 # ---------------------------------------------------------
@@ -408,7 +442,11 @@ def get_task_progress(
             ),
         ).fetchone()
 
-    return 0 if row is None else row[0]
+    return (
+        0
+        if row is None
+        else row[0]
+    )
 
 
 def is_task_completed(
@@ -429,10 +467,14 @@ def is_task_completed(
             ),
         ).fetchone()
 
-    return bool(row and row[0])
+    return bool(
+        row and row[0]
+    )
 
 
-def completed_task_count(user_id: int) -> int:
+def completed_task_count(
+    user_id: int,
+) -> int:
     with sqlite3.connect(DATABASE) as connection:
         row = connection.execute(
             """
@@ -444,26 +486,37 @@ def completed_task_count(user_id: int) -> int:
             (user_id,),
         ).fetchone()
 
-    return 0 if row is None else row[0]
+    return (
+        0
+        if row is None
+        else row[0]
+    )
 
 
 # ---------------------------------------------------------
 # DISPLAY
 # ---------------------------------------------------------
 
-def difficulty_emote(difficulty: str) -> str:
+def difficulty_emote(
+    difficulty: str,
+) -> str:
     return {
         "easy": "🟢",
         "medium": "🟡",
         "hard": "🔴",
-    }.get(difficulty, "✦")
+    }.get(
+        difficulty,
+        "✦",
+    )
 
 
 def build_weekly_embed(
     user_id: int,
     selected_tasks: list,
 ) -> discord.Embed:
-    completed = completed_task_count(user_id)
+    completed = completed_task_count(
+        user_id
+    )
 
     description = (
         f"<@{user_id}>\n\n"
@@ -524,7 +577,10 @@ def build_weekly_embed(
 # ---------------------------------------------------------
 
 class Weekly(commands.Cog):
-    def __init__(self, bot: commands.Bot):
+    def __init__(
+        self,
+        bot: commands.Bot,
+    ):
         self.bot = bot
 
         initialize_weekly_database()
@@ -535,7 +591,9 @@ class Weekly(commands.Cog):
         self.notification_loop.cancel()
 
     async def send_pending_notifications(self):
-        notifications = get_pending_notifications()
+        notifications = (
+            get_pending_notifications()
+        )
 
         for (
             notification_id,
@@ -545,19 +603,19 @@ class Weekly(commands.Cog):
             channel_id,
         ) in notifications:
 
-            guild = self.bot.get_guild(guild_id)
+            guild = self.bot.get_guild(
+                guild_id
+            )
 
             if guild is None:
                 continue
 
-            channel = guild.get_channel(channel_id)
+            channel = guild.get_channel(
+                channel_id
+            )
 
             if channel is None:
                 continue
-
-            # -------------------------------------------------
-            # FULL 3/3 WEEKLY COMPLETION
-            # -------------------------------------------------
 
             if task_id == "__weekly_complete__":
                 embed = discord.Embed(
@@ -586,10 +644,6 @@ class Weekly(commands.Cog):
                 )
 
                 continue
-
-            # -------------------------------------------------
-            # INDIVIDUAL TASK COMPLETION
-            # -------------------------------------------------
 
             selected_tasks = get_current_tasks(
                 user_id
@@ -667,7 +721,9 @@ class Weekly(commands.Cog):
     ):
         user_id = interaction.user.id
 
-        existing = get_weekly_data(user_id)
+        existing = get_weekly_data(
+            user_id
+        )
 
         if (
             existing is None
@@ -713,7 +769,9 @@ class Weekly(commands.Cog):
         )
 
 
-async def setup(bot: commands.Bot):
+async def setup(
+    bot: commands.Bot,
+):
     await bot.add_cog(
         Weekly(bot)
-    )
+        )
