@@ -50,7 +50,11 @@ def make_header_embed() -> discord.Embed:
     embed = discord.Embed(
         color=EMBED_COLOR,
     )
-    embed.set_image(url=HEADER_URL)
+
+    embed.set_image(
+        url=HEADER_URL
+    )
+
     return embed
 
 
@@ -58,7 +62,11 @@ def make_footer_embed() -> discord.Embed:
     embed = discord.Embed(
         color=EMBED_COLOR,
     )
-    embed.set_image(url=FOOTER_URL)
+
+    embed.set_image(
+        url=FOOTER_URL
+    )
+
     return embed
 
 
@@ -115,17 +123,22 @@ class BagView(discord.ui.View):
                 if current_rarity is not None:
                     lines.append("")
 
-                lines.append(f"**{rarity}**")
+                lines.append(
+                    f"**{rarity}**"
+                )
+
                 current_rarity = rarity
 
             lines.append(
                 f"`[{card['id']}]` "
-                f"[png]({card['image']}) "
+                f"[View]({card['image']}) "
                 f"{card['vault']} × **{card['quantity']}**"
             )
 
         if not page_cards:
-            lines.append("✦ Your Bag is empty.")
+            lines.append(
+                "✦ Your Bag is empty."
+            )
 
         total_pages = max(
             1,
@@ -241,7 +254,10 @@ class BagView(discord.ui.View):
 
         await interaction.response.send_message(
             embed=discord.Embed(
-                description="✦ Choose how you want to sort your Bag.",
+                description=(
+                    "✦ Choose how you want "
+                    "to sort your Bag."
+                ),
                 color=EMBED_COLOR,
             ),
             view=SortView(
@@ -304,7 +320,10 @@ class SortSelect(discord.ui.Select):
             discord.SelectOption(
                 label="3+ Duplicates",
                 value="duplicates",
-                description="Show cards you own 3 or more times.",
+                description=(
+                    "Show cards you own "
+                    "3 or more times."
+                ),
             ),
         ]
 
@@ -379,7 +398,9 @@ class BagSearchModal(discord.ui.Modal):
             max_length=50,
         )
 
-        self.add_item(self.search)
+        self.add_item(
+            self.search
+        )
 
     async def on_submit(
         self,
@@ -419,7 +440,9 @@ def get_bag_cards(
     user_id: int,
     filter_name: str = "all",
 ) -> list[dict]:
-    with sqlite3.connect(DATABASE) as connection:
+    with sqlite3.connect(
+        DATABASE
+    ) as connection:
         rows = connection.execute(
             """
             SELECT card_id, quantity
@@ -468,7 +491,9 @@ def get_bag_cards(
         cards.append(
             {
                 "id": card_id,
-                "collection_id": card["collection_id"],
+                "collection_id": card[
+                    "collection_id"
+                ],
                 "stars": card["stars"],
                 "vault": get_card_vault(
                     card["collection_id"]
@@ -511,7 +536,8 @@ def search_bag_cards(
     return [
         card
         for card in cards
-        if card["collection_id"].upper() == query
+        if card["collection_id"].upper()
+        == query
     ]
 
 
