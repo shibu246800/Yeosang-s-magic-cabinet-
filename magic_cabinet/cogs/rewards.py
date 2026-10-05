@@ -8,8 +8,6 @@ from discord import app_commands
 from discord.ext import commands
 
 from magic_cabinet.data.epic import CARDS as EPIC_CARDS
-from magic_cabinet.data.normal import CARDS as NORMAL_CARDS
-from magic_cabinet.data.rare import CARDS as RARE_CARDS
 
 
 DATABASE = "cabinet.db"
@@ -19,6 +17,20 @@ EMBED_COLOR = discord.Color.from_str("#4E0017")
 GLIMMER_EMOTE = "<:glimmer:1554842064464773172>"
 
 WEEKLY_GRAND_GLIMMERS = 25_000
+
+
+def initialize_rewards_database():
+    with sqlite3.connect(DATABASE) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS blind_boxes (
+                user_id INTEGER PRIMARY KEY,
+                quantity INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+
+        connection.commit()
 
 
 def get_pending_rewards(user_id: int):
@@ -36,6 +48,49 @@ def get_pending_rewards(user_id: int):
             """,
             (user_id,),
         ).fetchall()
+
+
+def get_blind_box_count(user_id: int) -> int:
+    with sqlite3.connect(DATABASE) as connection:
+        row = connection.execute(
+            """
+            SELECT quantity
+            FROM blind_boxes
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+
+    if row is None:
+        return 0
+
+    return row[0]
+
+
+def add_blind_boxes(
+    user_id: int,
+    quantity: int = 1,
+):
+    with sqlite3.connect(DATABASE) as connection:
+        connection.execute(
+            """
+            INSERT INTO blind_boxes (
+                user_id,
+                quantity
+            )
+            VALUES (?, ?)
+            ON CONFLICT(user_id)
+            DO UPDATE SET
+                quantity =
+                    quantity + excluded.quantity
+            """,
+            (
+                user_id,
+                quantity,
+            ),
+        )
+
+        connection.commit()
 
 
 def get_bag_quantity(
@@ -65,7 +120,6 @@ def get_bag_quantity(
 def add_to_bag(
     user_id: int,
     card_id: int,
-    quantity: int = 1,
 ):
     with sqlite3.connect(DATABASE) as connection:
         row = connection.execute(
@@ -89,12 +143,11 @@ def add_to_bag(
                     card_id,
                     quantity
                 )
-                VALUES (?, ?, ?)
+                VALUES (?, ?, 1)
                 """,
                 (
                     user_id,
                     card_id,
-                    quantity,
                 ),
             )
         else:
@@ -106,7 +159,7 @@ def add_to_bag(
                 AND card_id = ?
                 """,
                 (
-                    row[0] + quantity,
+                    row[0] + 1,
                     user_id,
                     card_id,
                 ),
@@ -131,18 +184,6 @@ def choose_new_epic(user_id: int):
     return random.choice(available)
 
 
-def create_blind_box():
-    pool = NORMAL_CARDS + RARE_CARDS + EPIC_CARDS
-
-    if not pool:
-        return []
-
-    return random.choices(
-        pool,
-        k=5,
-    )
-
-
 def claim_rewards(user_id: int):
     rewards = get_pending_rewards(user_id)
 
@@ -161,11 +202,9 @@ def claim_rewards(user_id: int):
     )
 
     new_epic = None
-    blind_box = []
 
     if has_grand_reward:
         new_epic = choose_new_epic(user_id)
-        blind_box = create_blind_box()
 
     total_glimmers = task_glimmers
 
@@ -218,10 +257,10 @@ def claim_rewards(user_id: int):
             new_epic["id"],
         )
 
-    for card in blind_box:
-        add_to_bag(
+    if has_grand_reward:
+        add_blind_boxes(
             user_id,
-            card["id"],
+            1,
         )
 
     return {
@@ -229,7 +268,7 @@ def claim_rewards(user_id: int):
         "grand_reward": has_grand_reward,
         "total_glimmers": total_glimmers,
         "new_epic": new_epic,
-        "blind_box": blind_box,
+        "blind_boxes": 1 if has_grand_reward else 0,
     }
 
 
@@ -262,8 +301,7 @@ def build_reward_text(result):
             )
 
         lines.append(
-            "🎁 **Blind Box**\n"
-            "5 cards have been added to your Bag."
+            "📦 **1 Blind Box** added to your collection."
         )
 
     return "\n\n".join(lines)
@@ -327,6 +365,7 @@ class RewardsView(discord.ui.View):
 class Rewards(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        initialize_rewards_database()
 
     @app_commands.command(
         name="rewards",
@@ -386,7 +425,7 @@ class Rewards(commands.Cog):
                 f"**{WEEKLY_GRAND_GLIMMERS:,}** "
                 "Weekly Glimmers\n"
                 "🃏 **1 New Epic Card**\n"
-                "🎁 **1 Blind Box • 5 Cards**\n"
+                "📦 **1 Blind Box**\n"
             )
 
         description += (
@@ -412,4 +451,4 @@ class Rewards(commands.Cog):
 async def setup(bot: commands.Bot):
     await bot.add_cog(
         Rewards(bot)
-    )
+        )
