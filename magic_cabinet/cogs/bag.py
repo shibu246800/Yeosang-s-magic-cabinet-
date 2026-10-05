@@ -7,10 +7,10 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from magic_cabinet.cogs.profile.normal import CARDS as NORMAL_CARDS
-from magic_cabinet.cogs.profile.rare import CARDS as RARE_CARDS
-from magic_cabinet.cogs.profile.epic import CARDS as EPIC_CARDS
-from magic_cabinet.cogs.profile.limited import CARDS as LIMITED_CARDS
+from magic_cabinet.data.cards.normal import CARDS as NORMAL_CARDS
+from magic_cabinet.data.cards.rare import CARDS as RARE_CARDS
+from magic_cabinet.data.cards.epic import CARDS as EPIC_CARDS
+from magic_cabinet.data.cards.limited import CARDS as LIMITED_CARDS
 
 
 DATABASE = "cabinet.db"
@@ -32,14 +32,12 @@ DIVIDER_URL = (
 
 CARDS_PER_PAGE = 10
 
-
 ALL_CARDS = (
     NORMAL_CARDS
     + RARE_CARDS
     + EPIC_CARDS
     + LIMITED_CARDS
 )
-
 
 RARITY_ORDER = {
     "★": 1,
@@ -50,7 +48,7 @@ RARITY_ORDER = {
 
 
 def get_card_vault(collection_id: str) -> str:
-    """Return BB, GG, or BG from a collection ID."""
+    """Return the vault for a collection."""
     if collection_id.startswith("BB"):
         return "BB"
 
@@ -64,7 +62,7 @@ def get_card_vault(collection_id: str) -> str:
 
 
 def get_all_card_data() -> dict:
-    """Return card data indexed by card ID."""
+    """Return all non-Legendary card data."""
     return {
         card["id"]: {
             **card,
@@ -75,7 +73,18 @@ def get_all_card_data() -> dict:
 
 
 def get_bag_cards(user_id: int) -> list[dict]:
-    """Get duplicate cards from the user's bag."""
+    """
+    Get cards that have duplicates.
+
+    The first copy belongs to the Collection.
+    Every copy after the first is a duplicate.
+
+    Example:
+    quantity 1 -> 0 duplicates -> not shown
+    quantity 2 -> 1 duplicate
+    quantity 3 -> 2 duplicates
+    quantity 4 -> 3 duplicates
+    """
     card_data = get_all_card_data()
 
     connection = sqlite3.connect(DATABASE)
@@ -132,7 +141,7 @@ def search_bag_cards(
     if not search_term:
         return cards
 
-    # Card ID search
+    # Card ID
     if search_term.isdigit():
         card_id = int(search_term)
 
@@ -142,7 +151,7 @@ def search_bag_cards(
             if card["id"] == card_id
         ]
 
-    # Collection ID search
+    # Collection ID
     return [
         card
         for card in cards
@@ -151,14 +160,14 @@ def search_bag_cards(
 
 
 def build_header_embed() -> discord.Embed:
-    """Build the Bag header embed."""
+    """Build the Bag header."""
     embed = discord.Embed(color=EMBED_COLOR)
     embed.set_image(url=HEADER_URL)
     return embed
 
 
 def build_divider_embed() -> discord.Embed:
-    """Build the Bag footer/divider embed."""
+    """Build the Bag divider/footer."""
     embed = discord.Embed(color=EMBED_COLOR)
     embed.set_image(url=DIVIDER_URL)
     return embed
@@ -169,7 +178,7 @@ def build_bag_embed(
     page: int,
     total_pages: int,
 ) -> discord.Embed:
-    """Build the Bag content embed."""
+    """Build the Bag content."""
     embed = discord.Embed(
         title="Bag",
         color=EMBED_COLOR,
@@ -187,7 +196,7 @@ def build_bag_embed(
 
     page_cards = cards[start:end]
 
-    sections: dict[str, list[str]] = {
+    sections = {
         "★": [],
         "★★": [],
         "★★★": [],
@@ -216,7 +225,9 @@ def build_bag_embed(
             + "\n".join(lines)
         )
 
-    embed.description = "\n\n".join(description_parts)
+    embed.description = "\n\n".join(
+        description_parts
+    )
 
     embed.set_footer(
         text=f"Page {page + 1}/{total_pages}"
@@ -226,7 +237,7 @@ def build_bag_embed(
 
 
 class BagView(discord.ui.View):
-    """Main Bag view."""
+    """Main Bag controls."""
 
     def __init__(
         self,
@@ -246,12 +257,19 @@ class BagView(discord.ui.View):
     def total_pages(self) -> int:
         return max(
             1,
-            math.ceil(len(self.cards) / CARDS_PER_PAGE),
+            math.ceil(
+                len(self.cards) / CARDS_PER_PAGE
+            ),
         )
 
     def update_buttons(self) -> None:
-        self.previous_button.disabled = self.page <= 0
-        self.next_button.disabled = self.page >= self.total_pages - 1
+        self.previous_button.disabled = (
+            self.page <= 0
+        )
+
+        self.next_button.disabled = (
+            self.page >= self.total_pages - 1
+        )
 
     def get_embeds(self) -> list[discord.Embed]:
         return [
@@ -263,17 +281,6 @@ class BagView(discord.ui.View):
             ),
             build_divider_embed(),
         ]
-
-    async def refresh(self) -> None:
-        self.update_buttons()
-
-        if self.message is None:
-            return
-
-        await self.message.edit(
-            embeds=self.get_embeds(),
-            view=self,
-        )
 
     @discord.ui.button(
         label="《",
@@ -296,6 +303,8 @@ class BagView(discord.ui.View):
 
         if self.page > 0:
             self.page -= 1
+
+        self.update_buttons()
 
         await interaction.response.edit_message(
             embeds=self.get_embeds(),
@@ -323,6 +332,8 @@ class BagView(discord.ui.View):
 
         if self.page < self.total_pages - 1:
             self.page += 1
+
+        self.update_buttons()
 
         await interaction.response.edit_message(
             embeds=self.get_embeds(),
@@ -379,7 +390,7 @@ class BagView(discord.ui.View):
 
 
 class SortSelect(discord.ui.Select):
-    """Bag sorting/filter selector."""
+    """Bag filter selector."""
 
     def __init__(self, parent_view: BagView):
         self.parent_view = parent_view
@@ -435,50 +446,52 @@ class SortSelect(discord.ui.Select):
             )
             return
 
-        original_cards = get_bag_cards(view.user_id)
+        all_cards = get_bag_cards(
+            view.user_id
+        )
 
         selected = self.values[0]
 
         if selected == "all":
-            filtered = original_cards
+            filtered = all_cards
 
         elif selected == "normal":
             filtered = [
                 card
-                for card in original_cards
+                for card in all_cards
                 if card["stars"] == "★"
             ]
 
         elif selected == "rare":
             filtered = [
                 card
-                for card in original_cards
+                for card in all_cards
                 if card["stars"] == "★★"
             ]
 
         elif selected == "epic":
             filtered = [
                 card
-                for card in original_cards
+                for card in all_cards
                 if card["stars"] == "★★★"
             ]
 
         elif selected == "limited":
             filtered = [
                 card
-                for card in original_cards
+                for card in all_cards
                 if card["stars"] == "★★★★"
             ]
 
         elif selected == "duplicates":
             filtered = [
                 card
-                for card in original_cards
+                for card in all_cards
                 if card["duplicates"] >= 3
             ]
 
         else:
-            filtered = original_cards
+            filtered = all_cards
 
         view.cards = filtered
         view.page = 0
@@ -497,7 +510,7 @@ class SortSelect(discord.ui.Select):
 
 
 class SortView(discord.ui.View):
-    """Temporary sorting menu."""
+    """Temporary Bag sorting menu."""
 
     def __init__(self, parent_view: BagView):
         super().__init__(timeout=60)
@@ -508,10 +521,12 @@ class SortView(discord.ui.View):
 
 
 class BagSearchModal(discord.ui.Modal):
-    """Search Bag modal."""
+    """Bag search modal."""
 
     def __init__(self, parent_view: BagView):
-        super().__init__(title="Search Bag")
+        super().__init__(
+            title="Search Bag"
+        )
 
         self.parent_view = parent_view
 
@@ -537,7 +552,9 @@ class BagSearchModal(discord.ui.Modal):
             )
             return
 
-        all_cards = get_bag_cards(view.user_id)
+        all_cards = get_bag_cards(
+            view.user_id
+        )
 
         results = search_bag_cards(
             all_cards,
@@ -565,7 +582,7 @@ class BagSearchModal(discord.ui.Modal):
 
 
 class Bag(commands.Cog):
-    """Bag commands."""
+    """Bag command."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -580,7 +597,9 @@ class Bag(commands.Cog):
     ):
         user_id = interaction.user.id
 
-        cards = get_bag_cards(user_id)
+        cards = get_bag_cards(
+            user_id
+        )
 
         view = BagView(
             user_id=user_id,
@@ -600,7 +619,9 @@ class Bag(commands.Cog):
             view=view,
         )
 
-        view.message = await interaction.original_response()
+        view.message = (
+            await interaction.original_response()
+        )
 
 
 async def setup(bot: commands.Bot):
