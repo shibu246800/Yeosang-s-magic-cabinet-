@@ -1,8 +1,25 @@
 """Weekly challenge progress tracker."""
 
+import json
 import sqlite3
 
 DATABASE = "cabinet.db"
+
+
+def initialize_tracker_database():
+    with sqlite3.connect(DATABASE) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS weekly_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                task_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                sent INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        connection.commit()
 
 
 def record_weekly_progress(
@@ -10,89 +27,57 @@ def record_weekly_progress(
     stat: str,
     amount: int = 1,
 ):
-    """
-    Add progress to the matching weekly challenge.
-
-    Supported stats:
-    - new_cards
-    - glimmers_earned
-    - drops_claimed
-    - collections_completed
-    """
+    """Add progress to the matching weekly challenge."""
 
     with sqlite3.connect(DATABASE) as connection:
+        challenge = connection.execute(
+            """
+            SELECT task_data
+            FROM weekly_challenges
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+
+        if challenge is None:
+            return
+
+        tasks = json.loads(challenge[0])
+
         rows = connection.execute(
             """
-            SELECT task_id
+            SELECT task_id, progress, completed
             FROM weekly_progress
             WHERE user_id = ?
-            AND completed = 0
             """,
             (user_id,),
         ).fetchall()
 
-        for (task_id,) in rows:
-            connection.execute(
-                """
-                SELECT task_data
-                FROM weekly_challenges
-                WHERE user_id = ?
-                """,
-                (user_id,),
-            )
-
-            challenge = connection.execute(
-                """
-                SELECT task_data
-                FROM weekly_challenges
-                WHERE user_id = ?
-                """,
-                (user_id,),
-            ).fetchone()
-
-            if challenge is None:
+        for task_id, current_progress, completed in rows:
+            if completed:
                 continue
 
-            import json
-
-            tasks = json.loads(challenge[0])
-
-            matching_task = next(
+            task = next(
                 (
-                    task
-                    for task in tasks
-                    if task["id"] == task_id
-                    and task["stat"] == stat
+                    item
+                    for item in tasks
+                    if item["id"] == task_id
+                    and item["stat"] == stat
                 ),
                 None,
             )
 
-            if matching_task is None:
+            if task is None:
                 continue
 
-            target = matching_task["amount"]
-
-            current = connection.execute(
-                """
-                SELECT progress
-                FROM weekly_progress
-                WHERE user_id = ?
-                AND task_id = ?
-                """,
-                (
-                    user_id,
-                    task_id,
-                ),
-            ).fetchone()
-
-            current_progress = (
-                0 if current is None else current[0]
-            )
+            target = task["amount"]
 
             new_progress = min(
                 current_progress + amount,
                 target,
             )
+
+            just_completed = new_progress >= target
 
             connection.execute(
                 """
@@ -104,10 +89,33 @@ def record_weekly_progress(
                 """,
                 (
                     new_progress,
-                    1 if new_progress >= target else 0,
+                    1 if just_completed else 0,
                     user_id,
                     task_id,
                 ),
             )
 
+            if just_completed:
+                from datetime import datetime, timezone
+
+                connection.execute(
+                    """
+                    INSERT INTO weekly_notifications (
+                        user_id,
+                        task_id,
+                        created_at,
+                        sent
+                    )
+                    VALUES (?, ?, ?, 0)
+                    """,
+                    (
+                        user_id,
+                        task_id,
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+
         connection.commit()
+
+
+initialize_tracker_database()
