@@ -2,11 +2,12 @@
 
 import io
 import math
+import urllib.request
 
 import discord
 from discord import app_commands
 from discord.ext import commands
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 
 EMBED_COLOR = discord.Color.from_str("#4E0017")
@@ -18,9 +19,9 @@ HEADER_URL = (
     "Untitled13_20261005205021.jpg"
 )
 
-# ------------------------------------------------------------------
+# ------------------------------------------------------------
 # COLLECTION DATA
-# ------------------------------------------------------------------
+# ------------------------------------------------------------
 
 COLLECTIONS = [
     {
@@ -38,11 +39,11 @@ COLLECTIONS = [
 ]
 
 
-# ------------------------------------------------------------------
-# HELPERS
-# ------------------------------------------------------------------
+# ------------------------------------------------------------
+# BASIC HELPERS
+# ------------------------------------------------------------
 
-def get_vault_name(vault):
+def vault_name(vault):
     return {
         "BB": "🌙 Velvet Moon",
         "GG": "🌹 Roseglass",
@@ -50,14 +51,17 @@ def get_vault_name(vault):
     }.get(vault, vault)
 
 
-def get_status(collection):
-    # Temporary until real inventory data is connected.
-    # Royal Court currently displays as unattended.
+def collection_status(collection):
+    # Temporary until the real card ownership/database system
+    # is connected.
     return "unattended"
 
 
-def filtered_collections(vault=None, status=None):
-    result = COLLECTIONS
+def get_filtered_collections(
+    vault=None,
+    status=None,
+):
+    result = COLLECTIONS.copy()
 
     if vault:
         result = [
@@ -70,34 +74,51 @@ def filtered_collections(vault=None, status=None):
         result = [
             collection
             for collection in result
-            if get_status(collection) == status
+            if collection_status(collection) == status
         ]
 
     return result
 
 
-def make_cover_board(collections):
-    """
-    Creates a 3x3 collection cover board.
+# ------------------------------------------------------------
+# COVER BOARD
+# ------------------------------------------------------------
 
-    Each page always contains nine positions.
-    Empty positions remain blank.
-    """
+def download_image(url):
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0"
+        },
+    )
 
-    width = 900
-    height = 900
-    gap = 20
-    cell_width = 286
-    cell_height = 286
+    with urllib.request.urlopen(
+        request,
+        timeout=15,
+    ) as response:
+        return response.read()
 
-    board = Image.new("RGB", (width, height), "#16070B")
+
+def create_cover_board(collections):
+    """Create a 3x3 collection cover board."""
+
+    board_size = 900
+    gap = 18
+    cell_size = 288
+
+    board = Image.new(
+        "RGB",
+        (board_size, board_size),
+        "#16070B",
+    )
 
     for index in range(9):
+
         row = index // 3
         column = index % 3
 
-        x = column * (cell_width + gap)
-        y = row * (cell_height + gap)
+        x = column * (cell_size + gap)
+        y = row * (cell_size + gap)
 
         if index >= len(collections):
             continue
@@ -105,28 +126,24 @@ def make_cover_board(collections):
         collection = collections[index]
 
         try:
-            import requests
-
-            response = requests.get(
-                collection["cover"],
-                timeout=15,
+            image_data = download_image(
+                collection["cover"]
             )
-            response.raise_for_status()
 
             cover = Image.open(
-                io.BytesIO(response.content)
+                io.BytesIO(image_data)
             ).convert("RGB")
 
             cover.thumbnail(
-                (cell_width, cell_height)
+                (cell_size, cell_size)
             )
 
             cover_x = x + (
-                cell_width - cover.width
+                cell_size - cover.width
             ) // 2
 
             cover_y = y + (
-                cell_height - cover.height
+                cell_size - cover.height
             ) // 2
 
             board.paste(
@@ -141,30 +158,76 @@ def make_cover_board(collections):
                 (
                     x,
                     y,
-                    x + cell_width,
-                    y + cell_height,
+                    x + cell_size,
+                    y + cell_size,
                 ),
                 outline="#4E0017",
                 width=3,
             )
 
     output = io.BytesIO()
+
     board.save(
         output,
         format="PNG",
     )
+
     output.seek(0)
 
     return output
 
 
-# ------------------------------------------------------------------
-# COLLECTION SELECT
-# ------------------------------------------------------------------
+# ------------------------------------------------------------
+# COLLECTION BOARD
+# ------------------------------------------------------------
+
+def build_collection_board(
+    collection,
+    user,
+):
+    embed = discord.Embed(
+        color=EMBED_COLOR,
+    )
+
+    embed.title = (
+        f'{collection["name"]} • {collection["id"]}'
+    )
+
+    embed.description = (
+        f'{vault_name(collection["vault"])}\n'
+        f'*{collection["series"]} Series*'
+    )
+
+    # Temporary visual board.
+    # Real card ownership will be connected later.
+    embed.add_field(
+        name="Collection",
+        value=(
+            "▣ ▣ ▣\n"
+            "▣ ▣ ▣\n"
+            "◆"
+        ),
+        inline=False,
+    )
+
+    embed.set_footer(
+        text="6 Base Cards • 1 Legendary"
+    )
+
+    return embed
+
+
+# ------------------------------------------------------------
+# COLLECTION SELECT MENU
+# ------------------------------------------------------------
 
 class CollectionSelect(discord.ui.Select):
 
-    def __init__(self, collections):
+    def __init__(
+        self,
+        collections,
+    ):
+        self.available_collections = collections
 
         options = []
 
@@ -174,7 +237,7 @@ class CollectionSelect(discord.ui.Select):
                     label=collection["name"][:100],
                     description=(
                         f'{collection["id"]} • '
-                        f'{get_vault_name(collection["vault"])}'
+                        f'{vault_name(collection["vault"])}'
                     )[:100],
                     value=collection["id"],
                 )
@@ -184,21 +247,24 @@ class CollectionSelect(discord.ui.Select):
             options.append(
                 discord.SelectOption(
                     label="No collections found",
-                    value="none",
+                    description="There are no collections here.",
+                    value="NONE",
                 )
             )
 
         super().__init__(
-            placeholder="Choose a collection...",
+            placeholder="Open Collection",
             options=options,
-            custom_id="collection_select",
+            row=0,
         )
 
-    async def callback(self, interaction):
+    async def callback(
+        self,
+        interaction,
+    ):
+        selected_id = self.values[0]
 
-        collection_id = self.values[0]
-
-        if collection_id == "none":
+        if selected_id == "NONE":
             await interaction.response.send_message(
                 "No collections are available here.",
                 ephemeral=True,
@@ -209,7 +275,7 @@ class CollectionSelect(discord.ui.Select):
             (
                 item
                 for item in COLLECTIONS
-                if item["id"] == collection_id
+                if item["id"] == selected_id
             ),
             None,
         )
@@ -230,29 +296,31 @@ class CollectionSelect(discord.ui.Select):
         )
 
 
-# ------------------------------------------------------------------
+# ------------------------------------------------------------
 # SEARCH MODAL
-# ------------------------------------------------------------------
+# ------------------------------------------------------------
 
-class CollectionSearchModal(discord.ui.Modal):
+class CollectionSearchModal(
+    discord.ui.Modal,
+    title="Search Collection",
+):
 
-    def __init__(self):
-        super().__init__(
-            title="Search Collection"
+    collection_id = discord.ui.TextInput(
+        label="Collection ID",
+        placeholder="Example: BB_001",
+        required=True,
+        max_length=30,
+    )
+
+    async def on_submit(
+        self,
+        interaction,
+    ):
+        collection_id = (
+            self.collection_id.value
+            .strip()
+            .upper()
         )
-
-        self.collection_id = discord.ui.TextInput(
-            label="Collection ID",
-            placeholder="Example: BB_001",
-            required=True,
-            max_length=30,
-        )
-
-        self.add_item(self.collection_id)
-
-    async def on_submit(self, interaction):
-
-        collection_id = self.collection_id.value.strip().upper()
 
         collection = next(
             (
@@ -279,49 +347,94 @@ class CollectionSearchModal(discord.ui.Modal):
         )
 
 
-# ------------------------------------------------------------------
-# COLLECTION BOARD
-# ------------------------------------------------------------------
+# ------------------------------------------------------------
+# STATUS MENU
+# ------------------------------------------------------------
 
-def build_collection_board(collection, user):
+class StatusSelect(
+    discord.ui.Select
+):
 
-    embed = discord.Embed(
-        color=EMBED_COLOR,
-    )
+    def __init__(
+        self,
+        parent_view,
+    ):
+        self.parent_view = parent_view
 
-    embed.title = (
-        f'{collection["id"]} • {collection["name"]}'
-    )
+        options = [
+            discord.SelectOption(
+                label="All Collections",
+                value="all",
+            ),
+            discord.SelectOption(
+                label="Completed",
+                value="completed",
+            ),
+            discord.SelectOption(
+                label="Ongoing",
+                value="ongoing",
+            ),
+            discord.SelectOption(
+                label="Unattended",
+                value="unattended",
+            ),
+        ]
 
-    embed.description = (
-        f'**{get_vault_name(collection["vault"])}**\n'
-        f'*{collection["series"]} Series*'
-    )
+        super().__init__(
+            placeholder="Show Collections By",
+            options=options,
+        )
 
-    # Temporary board until the real six-card ownership
-    # system is connected.
-    embed.add_field(
-        name="Collection",
-        value=(
-            "▣ ▣ ▣\n"
-            "▣ ▣ ▣\n"
-            "◆"
-        ),
-        inline=False,
-    )
+    async def callback(
+        self,
+        interaction,
+    ):
+        selected = self.values[0]
 
-    embed.set_footer(
-        text="6 Base Cards • 1 Legendary"
-    )
+        if selected == "all":
+            status = None
+        else:
+            status = selected
 
-    return embed
+        self.parent_view.status = status
+        self.parent_view.page = 0
+
+        self.parent_view.collections = (
+            get_filtered_collections(
+                vault=self.parent_view.vault,
+                status=status,
+            )
+        )
+
+        await self.parent_view.update_message(
+            interaction
+        )
 
 
-# ------------------------------------------------------------------
-# MAIN VIEW
-# ------------------------------------------------------------------
+class StatusView(
+    discord.ui.View
+):
 
-class CollectionView(discord.ui.View):
+    def __init__(
+        self,
+        parent_view,
+    ):
+        super().__init__(
+            timeout=60
+        )
+
+        self.add_item(
+            StatusSelect(parent_view)
+        )
+
+
+# ------------------------------------------------------------
+# MAIN COLLECTION VIEW
+# ------------------------------------------------------------
+
+class CollectionView(
+    discord.ui.View
+):
 
     def __init__(
         self,
@@ -332,7 +445,7 @@ class CollectionView(discord.ui.View):
         status=None,
     ):
         super().__init__(
-            timeout=300
+            timeout=600
         )
 
         self.author = author
@@ -341,28 +454,150 @@ class CollectionView(discord.ui.View):
         self.vault = vault
         self.status = status
 
+        self.rebuild()
+
+    # --------------------------------------------------------
+    # PAGE
+    # --------------------------------------------------------
+
+    @property
+    def max_pages(self):
+        return max(
+            1,
+            math.ceil(
+                len(self.collections) / 9
+            ),
+        )
+
+    @property
+    def current_page(self):
+        start = self.page * 9
+        end = start + 9
+
+        return self.collections[start:end]
+
+    # --------------------------------------------------------
+    # VIEW BUILD
+    # --------------------------------------------------------
+
+    def rebuild(self):
+
+        self.clear_items()
+
+        # Open Collection dropdown
         self.add_item(
             CollectionSelect(
-                self.current_page_collections()
+                self.current_page
             )
         )
 
-    def current_page_collections(self):
-        start = self.page * 9
-        end = start + 9
-        return self.collections[start:end]
+        # Vault buttons
+        self.add_item(
+            VaultButton(
+                self,
+                "🌙 BB",
+                "BB",
+            )
+        )
 
-    async def refresh(self, interaction):
+        self.add_item(
+            VaultButton(
+                self,
+                "🌹 GG",
+                "GG",
+            )
+        )
+
+        self.add_item(
+            VaultButton(
+                self,
+                "🪡 BG",
+                "BG",
+            )
+        )
+
+        # Search
+        self.add_item(
+            SearchButton(self)
+        )
+
+        # Status
+        self.add_item(
+            StatusButton(self)
+        )
+
+        # Previous / next
+        self.add_item(
+            PreviousButton(self)
+        )
+
+        self.add_item(
+            NextButton(self)
+        )
+
+    # --------------------------------------------------------
+    # MESSAGE UPDATE
+    # --------------------------------------------------------
+
+    async def update_message(
+        self,
+        interaction,
+    ):
+        self.rebuild()
+
+        board = create_cover_board(
+            self.current_page
+        )
+
+        file = discord.File(
+            board,
+            filename="collection_board.png",
+        )
+
+        header_embed = discord.Embed(
+            color=EMBED_COLOR,
+        )
+
+        header_embed.set_image(
+            url=HEADER_URL
+        )
+
+        gallery_embed = discord.Embed(
+            color=EMBED_COLOR,
+        )
+
+        gallery_embed.set_image(
+            url="attachment://collection_board.png"
+        )
+
+        gallery_embed.set_footer(
+            text=(
+                f"Collections {self.page * 9 + 1}"
+                f"–"
+                f"{self.page * 9 + len(self.current_page)}"
+                f" • Page {self.page + 1}/{self.max_pages}"
+            )
+        )
 
         await interaction.response.edit_message(
-            embeds=await build_gallery_embeds(
-                self.current_page_collections()
-            ),
+            embeds=[
+                header_embed,
+                gallery_embed,
+            ],
+            attachments=[
+                file,
+            ],
             view=self,
         )
 
-    async def interaction_check(self, interaction):
+    # --------------------------------------------------------
+    # USER CHECK
+    # --------------------------------------------------------
 
+    async def interaction_check(
+        self,
+        interaction,
+    ):
         if interaction.user.id != self.author.id:
             await interaction.response.send_message(
                 "This collection menu belongs to another user.",
@@ -372,136 +607,134 @@ class CollectionView(discord.ui.View):
 
         return True
 
-    @discord.ui.button(
-        label="🌙 BB",
-        style=discord.ButtonStyle.secondary,
-        row=1,
-    )
-    async def bb_button(self, interaction, button):
 
-        self.vault = "BB"
-        self.page = 0
+# ------------------------------------------------------------
+# VAULT BUTTON
+# ------------------------------------------------------------
 
-        self.collections = filtered_collections(
-            vault=self.vault,
-            status=self.status,
+class VaultButton(
+    discord.ui.Button
+):
+
+    def __init__(
+        self,
+        parent_view,
+        label,
+        vault,
+    ):
+        super().__init__(
+            label=label,
+            style=discord.ButtonStyle.secondary,
+            row=1,
         )
 
-        self.clear_items()
+        self.parent_view = parent_view
+        self.vault = vault
 
-        self.add_item(
-            CollectionSelect(
-                self.current_page_collections()
+    async def callback(
+        self,
+        interaction,
+    ):
+        self.parent_view.vault = self.vault
+        self.parent_view.page = 0
+
+        self.parent_view.collections = (
+            get_filtered_collections(
+                vault=self.vault,
+                status=self.parent_view.status,
             )
         )
 
-        self.add_controls()
-
-        await self.refresh(interaction)
-
-    @discord.ui.button(
-        label="🌹 GG",
-        style=discord.ButtonStyle.secondary,
-        row=1,
-    )
-    async def gg_button(self, interaction, button):
-
-        self.vault = "GG"
-        self.page = 0
-
-        self.collections = filtered_collections(
-            vault=self.vault,
-            status=self.status,
+        await self.parent_view.update_message(
+            interaction
         )
 
-        self.clear_items()
 
-        self.add_item(
-            CollectionSelect(
-                self.current_page_collections()
-            )
+# ------------------------------------------------------------
+# SEARCH BUTTON
+# ------------------------------------------------------------
+
+class SearchButton(
+    discord.ui.Button
+):
+
+    def __init__(
+        self,
+        parent_view,
+    ):
+        super().__init__(
+            label="🔎 Search ID",
+            style=discord.ButtonStyle.primary,
+            row=1,
         )
 
-        self.add_controls()
+        self.parent_view = parent_view
 
-        await self.refresh(interaction)
-
-    @discord.ui.button(
-        label="🪡 BG",
-        style=discord.ButtonStyle.secondary,
-        row=1,
-    )
-    async def bg_button(self, interaction, button):
-
-        self.vault = "BG"
-        self.page = 0
-
-        self.collections = filtered_collections(
-            vault=self.vault,
-            status=self.status,
-        )
-
-        self.clear_items()
-
-        self.add_item(
-            CollectionSelect(
-                self.current_page_collections()
-            )
-        )
-
-        self.add_controls()
-
-        await self.refresh(interaction)
-
-    @discord.ui.button(
-        label="🔎 Search ID",
-        style=discord.ButtonStyle.primary,
-        row=1,
-    )
-    async def search_button(self, interaction, button):
-
+    async def callback(
+        self,
+        interaction,
+    ):
         await interaction.response.send_modal(
             CollectionSearchModal()
         )
 
-    @discord.ui.button(
-        label="Status",
-        style=discord.ButtonStyle.secondary,
-        row=1,
-    )
-    async def status_button(self, interaction, button):
 
+# ------------------------------------------------------------
+# STATUS BUTTON
+# ------------------------------------------------------------
+
+class StatusButton(
+    discord.ui.Button
+):
+
+    def __init__(
+        self,
+        parent_view,
+    ):
+        super().__init__(
+            label="Status",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+
+        self.parent_view = parent_view
+
+    async def callback(
+        self,
+        interaction,
+    ):
         await interaction.response.send_message(
-            "Choose a collection status:",
-            view=StatusView(self),
+            view=StatusView(
+                self.parent_view
+            ),
             ephemeral=True,
         )
 
-    def add_controls(self):
 
-        self.add_item(
-            PreviousButton(self)
-        )
-
-        self.add_item(
-            NextButton(self)
-        )
-
+# ------------------------------------------------------------
+# PREVIOUS
+# ------------------------------------------------------------
 
 class PreviousButton(
     discord.ui.Button
 ):
 
-    def __init__(self, parent):
+    def __init__(
+        self,
+        parent_view,
+    ):
         super().__init__(
             label="《",
             style=discord.ButtonStyle.secondary,
             row=2,
         )
-        self.parent_view = parent
 
-    async def callback(self, interaction):
+        self.parent_view = parent_view
 
+    async def callback(
+        self,
+        interaction,
+    ):
         if self.parent_view.page <= 0:
             await interaction.response.send_message(
                 "You're already on the first page.",
@@ -511,41 +744,39 @@ class PreviousButton(
 
         self.parent_view.page -= 1
 
-        self.parent_view.clear_items()
-
-        self.parent_view.add_item(
-            CollectionSelect(
-                self.parent_view.current_page_collections()
-            )
+        await self.parent_view.update_message(
+            interaction
         )
 
-        self.parent_view.add_controls()
 
-        await self.parent_view.refresh(interaction)
-
+# ------------------------------------------------------------
+# NEXT
+# ------------------------------------------------------------
 
 class NextButton(
     discord.ui.Button
 ):
 
-    def __init__(self, parent):
+    def __init__(
+        self,
+        parent_view,
+    ):
         super().__init__(
             label="》",
             style=discord.ButtonStyle.secondary,
             row=2,
         )
-        self.parent_view = parent
 
-    async def callback(self, interaction):
+        self.parent_view = parent_view
 
-        max_pages = max(
-            1,
-            math.ceil(
-                len(self.parent_view.collections) / 9
-            ),
-        )
-
-        if self.parent_view.page >= max_pages - 1:
+    async def callback(
+        self,
+        interaction,
+    ):
+        if (
+            self.parent_view.page
+            >= self.parent_view.max_pages - 1
+        ):
             await interaction.response.send_message(
                 "You're already on the last page.",
                 ephemeral=True,
@@ -554,185 +785,78 @@ class NextButton(
 
         self.parent_view.page += 1
 
-        self.parent_view.clear_items()
-
-        self.parent_view.add_item(
-            CollectionSelect(
-                self.parent_view.current_page_collections()
-            )
-        )
-
-        self.parent_view.add_controls()
-
-        await self.parent_view.refresh(interaction)
-
-
-# ------------------------------------------------------------------
-# STATUS FILTER
-# ------------------------------------------------------------------
-
-class StatusView(discord.ui.View):
-
-    def __init__(self, parent):
-        super().__init__(
-            timeout=60
-        )
-        self.parent_view = parent
-
-    @discord.ui.button(
-        label="Completed",
-        style=discord.ButtonStyle.success,
-    )
-    async def completed(self, interaction, button):
-
-        await self.apply_status(
-            interaction,
-            "completed",
-        )
-
-    @discord.ui.button(
-        label="Ongoing",
-        style=discord.ButtonStyle.primary,
-    )
-    async def ongoing(self, interaction, button):
-
-        await self.apply_status(
-            interaction,
-            "ongoing",
-        )
-
-    @discord.ui.button(
-        label="Unattended",
-        style=discord.ButtonStyle.secondary,
-    )
-    async def unattended(self, interaction, button):
-
-        await self.apply_status(
-            interaction,
-            "unattended",
-        )
-
-    @discord.ui.button(
-        label="All",
-        style=discord.ButtonStyle.danger,
-    )
-    async def all_status(self, interaction, button):
-
-        await self.apply_status(
-            interaction,
-            None,
-        )
-
-    async def apply_status(
-        self,
-        interaction,
-        status,
-    ):
-
-        self.parent_view.status = status
-        self.parent_view.page = 0
-
-        self.parent_view.collections = filtered_collections(
-            vault=self.parent_view.vault,
-            status=status,
-        )
-
-        self.parent_view.clear_items()
-
-        self.parent_view.add_item(
-            CollectionSelect(
-                self.parent_view.current_page_collections()
-            )
-        )
-
-        self.parent_view.add_controls()
-
-        await interaction.response.edit_message(
-            content=None,
-            embeds=await build_gallery_embeds(
-                self.parent_view.current_page_collections()
-            ),
-            view=self.parent_view,
+        await self.parent_view.update_message(
+            interaction
         )
 
 
-# ------------------------------------------------------------------
-# EMBEDS
-# ------------------------------------------------------------------
-
-async def build_gallery_embeds(collections):
-
-    board = make_cover_board(
-        collections
-    )
-
-    file = discord.File(
-        board,
-        filename="collection_board.png",
-    )
-
-    header_embed = discord.Embed(
-        color=EMBED_COLOR
-    )
-
-    header_embed.set_image(
-        url=HEADER_URL
-    )
-
-    gallery_embed = discord.Embed(
-        color=EMBED_COLOR
-    )
-
-    gallery_embed.set_image(
-        url="attachment://collection_board.png"
-    )
-
-    gallery_embed.set_footer(
-        text=(
-            "Collections "
-            f"• {len(collections)} shown"
-        )
-    )
-
-    # The attachment must travel with the embed.
-    return [
-        header_embed,
-        gallery_embed,
-    ], file
-
-
-# ------------------------------------------------------------------
+# ------------------------------------------------------------
 # COG
-# ------------------------------------------------------------------
+# ------------------------------------------------------------
 
-class Collection(commands.Cog):
+class Collection(
+    commands.Cog
+):
 
-    def __init__(self, bot):
+    def __init__(
+        self,
+        bot,
+    ):
         self.bot = bot
 
     @app_commands.command(
         name="collection",
-        description="Browse the Magic Cabinet collections.",
+        description="Browse Magic Cabinet collections.",
     )
     async def collection(
         self,
         interaction: discord.Interaction,
     ):
+        collections = get_filtered_collections()
 
-        collections = filtered_collections()
-
-        embeds, file = await build_gallery_embeds(
+        board = create_cover_board(
             collections[:9]
         )
 
+        file = discord.File(
+            board,
+            filename="collection_board.png",
+        )
+
+        header_embed = discord.Embed(
+            color=EMBED_COLOR,
+        )
+
+        header_embed.set_image(
+            url=HEADER_URL
+        )
+
+        gallery_embed = discord.Embed(
+            color=EMBED_COLOR,
+        )
+
+        gallery_embed.set_image(
+            url="attachment://collection_board.png"
+        )
+
         view = CollectionView(
-            interaction.user,
-            collections,
+            author=interaction.user,
+            collections=collections,
             page=0,
         )
 
+        gallery_embed.set_footer(
+            text=(
+                f"Collections 1–{min(9, len(collections))}"
+                f" • Page 1/{view.max_pages}"
+            )
+        )
+
         await interaction.response.send_message(
-            embeds=embeds,
+            embeds=[
+                header_embed,
+                gallery_embed,
+            ],
             file=file,
             view=view,
         )
@@ -741,4 +865,4 @@ class Collection(commands.Cog):
 async def setup(bot):
     await bot.add_cog(
         Collection(bot)
-    )
+            )
