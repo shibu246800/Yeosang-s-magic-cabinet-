@@ -1,4 +1,4 @@
-"""Magic Cabinet collection command."""
+""Magic Cabinet collection command."""
 
 import io
 import math
@@ -35,6 +35,13 @@ COLLECTIONS = [
             "refs/heads/main/magic_cabinet/collection_covers/"
             "grok_1791211167707.jpg"
         ),
+    },
+        {
+        "id": "BB_002",
+        "name": "Test Collection",
+        "vault": "BB",
+        "series": "Velvet Moon",
+        "cover": "",
     },
 ]
 
