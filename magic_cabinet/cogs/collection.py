@@ -150,7 +150,7 @@ def download_image(url):
 
         with urllib.request.urlopen(
             request,
-            timeout=15,
+            timeout=10,
         ) as response:
             data = response.read()
 
@@ -196,12 +196,12 @@ def create_cover_board(collections):
 
     rows = math.ceil(count / columns)
 
-    width = 1200
+    board_width = 1200
     padding = 70
     gap = 35
 
     usable_width = (
-        width
+        board_width
         - padding * 2
         - gap * (columns - 1)
     )
@@ -209,7 +209,7 @@ def create_cover_board(collections):
     cell_width = usable_width // columns
     cover_height = int(cell_width * 1.4)
 
-    height = (
+    board_height = (
         padding * 2
         + cover_height * rows
         + gap * (rows - 1)
@@ -217,11 +217,12 @@ def create_cover_board(collections):
 
     board = Image.new(
         "RGB",
-        (width, height),
+        (board_width, board_height),
         "white",
     )
 
     for index, collection in enumerate(collections):
+
         cover = download_image(
             collection.get("cover")
         )
@@ -273,16 +274,16 @@ def build_collection_board(
         user_id
     )
 
-    width = 1200
+    board_width = 1200
     padding = 70
     gap = 35
     columns = 3
 
     card_width = (
-        width
+        board_width
         - padding * 2
         - gap * 2
-    ) // 3
+    ) // columns
 
     card_height = int(
         card_width * 1.4
@@ -290,7 +291,7 @@ def build_collection_board(
 
     row_height = card_height + gap
 
-    height = (
+    board_height = (
         padding
         + row_height * 3
         + 100
@@ -298,19 +299,25 @@ def build_collection_board(
 
     board = Image.new(
         "RGB",
-        (width, height),
+        (
+            board_width,
+            board_height,
+        ),
         "white",
     )
 
     draw = ImageDraw.Draw(board)
 
     for index in range(6):
+
         x = padding + (
-            index % columns
-        ) * (card_width + gap)
+            index % 3
+        ) * (
+            card_width + gap
+        )
 
         y = padding + (
-            index // columns
+            index // 3
         ) * row_height
 
         if index >= len(cards):
@@ -328,6 +335,7 @@ def build_collection_board(
             continue
 
         card = cards[index]
+
         image = download_image(
             card.get("image", "")
         )
@@ -348,7 +356,10 @@ def build_collection_board(
 
         image = ImageOps.fit(
             image,
-            (card_width, card_height),
+            (
+                card_width,
+                card_height,
+            ),
             method=Image.Resampling.LANCZOS,
         )
 
@@ -383,8 +394,8 @@ def build_collection_board(
 
     draw.text(
         (
-            width // 2,
-            height - 45,
+            board_width // 2,
+            board_height - 45,
         ),
         f"{collection_id} • {collection_name}",
         fill="#4E0017",
@@ -432,6 +443,7 @@ class CollectionSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction):
+
         collection_id = self.values[0]
 
         if collection_id == "none":
@@ -457,6 +469,10 @@ class CollectionSelect(discord.ui.Select):
             )
             return
 
+        await interaction.response.defer(
+            ephemeral=True
+        )
+
         image = build_collection_board(
             collection,
             interaction.user.id,
@@ -475,7 +491,7 @@ class CollectionSelect(discord.ui.Select):
             url="attachment://collection.png"
         )
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=embed,
             file=file,
             ephemeral=True,
@@ -499,6 +515,7 @@ class CollectionSearchModal(
         self.collection_view = view
 
     async def on_submit(self, interaction):
+
         search_id = (
             self.collection_id.value
             .strip()
@@ -521,6 +538,10 @@ class CollectionSearchModal(
             )
             return
 
+        await interaction.response.defer(
+            ephemeral=True
+        )
+
         image = build_collection_board(
             collection,
             interaction.user.id,
@@ -539,7 +560,7 @@ class CollectionSearchModal(
             url="attachment://collection.png"
         )
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=embed,
             file=file,
             ephemeral=True,
@@ -572,11 +593,16 @@ class StatusSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction):
+
         self.collection_view.status = (
             self.values[0]
         )
 
         self.collection_view.current_page = 0
+
+        await interaction.response.defer(
+            ephemeral=True
+        )
 
         await self.collection_view.refresh(
             interaction
@@ -614,6 +640,7 @@ class CollectionView(discord.ui.View):
         self.refresh_buttons()
 
     def refresh_buttons(self):
+
         self.clear_items()
 
         filtered = get_filtered_collections(
@@ -681,6 +708,7 @@ class CollectionView(discord.ui.View):
             )
 
     async def refresh(self, interaction):
+
         filtered = get_filtered_collections(
             self.user_id,
             self.vault,
@@ -723,7 +751,7 @@ class CollectionView(discord.ui.View):
             )
         )
 
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             embed=embed,
             attachments=[file],
             view=self,
@@ -748,6 +776,7 @@ class VaultButton(discord.ui.Button):
         self.vault = vault
 
     async def callback(self, interaction):
+
         if self.collection_view.vault == self.vault:
             self.collection_view.vault = None
         else:
@@ -755,6 +784,8 @@ class VaultButton(discord.ui.Button):
 
         self.collection_view.status = None
         self.collection_view.current_page = 0
+
+        await interaction.response.defer()
 
         await self.collection_view.refresh(
             interaction
@@ -792,6 +823,7 @@ class StatusButton(discord.ui.Button):
         self.collection_view = view
 
     async def callback(self, interaction):
+
         await interaction.response.send_message(
             "Choose a collection status:",
             view=StatusView(
@@ -813,7 +845,10 @@ class PreviousButton(discord.ui.Button):
         self.collection_view = view
 
     async def callback(self, interaction):
+
         self.collection_view.current_page -= 1
+
+        await interaction.response.defer()
 
         await self.collection_view.refresh(
             interaction
@@ -832,7 +867,10 @@ class NextButton(discord.ui.Button):
         self.collection_view = view
 
     async def callback(self, interaction):
+
         self.collection_view.current_page += 1
+
+        await interaction.response.defer()
 
         await self.collection_view.refresh(
             interaction
@@ -852,6 +890,9 @@ class Collection(commands.Cog):
         self,
         interaction: discord.Interaction,
     ):
+
+        await interaction.response.defer()
+
         view = CollectionView(
             user_id=interaction.user.id
         )
@@ -890,7 +931,7 @@ class Collection(commands.Cog):
             url=HEADER_URL
         )
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embeds=[
                 header_embed,
                 embed,
@@ -903,4 +944,4 @@ class Collection(commands.Cog):
 async def setup(bot):
     await bot.add_cog(
         Collection(bot)
-        )
+)
