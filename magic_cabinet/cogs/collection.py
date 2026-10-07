@@ -1,8 +1,10 @@
 """Magic Cabinet collection command."""
 
 import io
+import json
 import math
 import urllib.request
+from pathlib import Path
 
 import discord
 from discord import app_commands
@@ -19,24 +21,33 @@ HEADER_URL = (
     "Untitled13_20261005205021.jpg"
 )
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+COLLECTIONS_FILE = BASE_DIR / "data" / "collections.json"
+
+
 # ------------------------------------------------------------
 # COLLECTION DATA
 # ------------------------------------------------------------
 
-COLLECTIONS = [
-    {
-        "id": "BB_001",
-        "name": "Royal Court",
-        "vault": "BB",
-        "series": "Velvet Moon",
-        "cover": (
-            "https://raw.githubusercontent.com/"
-            "shibu246800/Yeosang-s-magic-cabinet-/"
-            "refs/heads/main/magic_cabinet/collection_covers/"
-            "grok_1791211167707.jpg"
-        ),
-    },
-    ]
+def load_collections():
+    if not COLLECTIONS_FILE.exists():
+        return []
+
+    try:
+        with open(
+            COLLECTIONS_FILE,
+            "r",
+            encoding="utf-8",
+        ) as file:
+            data = json.load(file)
+
+        return data.get("collections", [])
+
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+COLLECTIONS = load_collections()
 
 
 # ------------------------------------------------------------
@@ -52,8 +63,8 @@ def vault_name(vault):
 
 
 def collection_status(collection):
-    # Temporary until the real card ownership/database system
-    # is connected.
+    # Temporary until the real card ownership/database
+    # system is connected.
     return "unattended"
 
 
@@ -67,7 +78,7 @@ def get_filtered_collections(
         result = [
             collection
             for collection in result
-            if collection["vault"] == vault
+            if collection.get("vault") == vault
         ]
 
     if status:
@@ -103,10 +114,6 @@ def create_cover_board(collections):
     """Create a dynamic collection cover board."""
 
     count = len(collections)
-
-    # --------------------------------------------------------
-    # EMPTY BOARD
-    # --------------------------------------------------------
 
     if count == 0:
         board = Image.new(
@@ -154,11 +161,7 @@ def create_cover_board(collections):
     # --------------------------------------------------------
 
     board_width = 1200
-
-    # Space around the covers.
     outer_padding = 70
-
-    # Space between covers.
     gap = 35
 
     usable_width = (
@@ -203,17 +206,20 @@ def create_cover_board(collections):
             + row * (cell_size + gap)
         )
 
+        cover_url = collection.get("cover")
+
+        if not cover_url:
+            continue
+
         try:
             image_data = download_image(
-                collection["cover"]
+                cover_url
             )
 
             cover = Image.open(
                 io.BytesIO(image_data)
             ).convert("RGB")
 
-            # Covers automatically grow/shrink
-            # depending on the number of collections.
             cover.thumbnail(
                 (
                     cell_size,
@@ -576,14 +582,12 @@ class CollectionView(
 
         self.clear_items()
 
-        # Open Collection dropdown
         self.add_item(
             CollectionSelect(
                 self.current_page
             )
         )
 
-        # Vault buttons
         self.add_item(
             VaultButton(
                 self,
@@ -608,17 +612,14 @@ class CollectionView(
             )
         )
 
-        # Search
         self.add_item(
             SearchButton(self)
         )
 
-        # Status
         self.add_item(
             StatusButton(self)
         )
 
-        # Previous / next
         self.add_item(
             PreviousButton(self)
         )
@@ -957,4 +958,4 @@ class Collection(
 async def setup(bot):
     await bot.add_cog(
         Collection(bot)
-)
+            )
