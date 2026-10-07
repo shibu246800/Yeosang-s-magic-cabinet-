@@ -1,4 +1,4 @@
-"" Magic Cabinet collection command."""
+"""Magic Cabinet collection command."""
 
 import io
 import math
