@@ -5,7 +5,58 @@
       "name": "Royal Court",
       "vault": "BB",
       "series": "Velvet Moon",
-      "cover": "https://raw.githubusercontent.com/shibu246800/Yeosang-s-magic-cabinet-/refs/heads/main/magic_cabinet/collection_covers/grok_1791211167707.jpg"
+      "cover": "https://raw.githubusercontent.com/shibu246800/Yeosang-s-magic-cabinet-/refs/heads/main/magic_cabinet/collection_covers/grok_1791211167707.jpg",
+      "cards": [
+        {
+          "id": "BB_1_1",
+          "name": "",
+          "image": "",
+          "legendary": false,
+          "collected": false
+        },
+        {
+          "id": "BB_1_2",
+          "name": "",
+          "image": "",
+          "legendary": false,
+          "collected": false
+        },
+        {
+          "id": "BB_1_3",
+          "name": "",
+          "image": "",
+          "legendary": false,
+          "collected": false
+        },
+        {
+          "id": "BB_1_4",
+          "name": "",
+          "image": "",
+          "legendary": false,
+          "collected": false
+        },
+        {
+          "id": "BB_1_5",
+          "name": "",
+          "image": "",
+          "legendary": false,
+          "collected": false
+        },
+        {
+          "id": "BB_1_6",
+          "name": "",
+          "image": "",
+          "legendary": false,
+          "collected": false
+        },
+        {
+          "id": "BB_1_L",
+          "name": "",
+          "image": "",
+          "legendary": true,
+          "collected": false
+        }
+      ]
     }
   ]
 }
