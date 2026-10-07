@@ -36,14 +36,7 @@ COLLECTIONS = [
             "grok_1791211167707.jpg"
         ),
     },
-        {
-        "id": "BB_002",
-        "name": "Test Collection",
-        "vault": "BB",
-        "series": "Velvet Moon",
-        "cover": "",
-    },
-]
+    ]
 
 
 # ------------------------------------------------------------
