@@ -100,30 +100,108 @@ def download_image(url):
 
 
 def create_cover_board(collections):
-    """Create a 3x3 collection cover board."""
+    """Create a dynamic collection cover board."""
 
-    board_size = 900
-    gap = 18
-    cell_size = 288
+    count = len(collections)
+
+    # --------------------------------------------------------
+    # EMPTY BOARD
+    # --------------------------------------------------------
+
+    if count == 0:
+        board = Image.new(
+            "RGB",
+            (1200, 900),
+            "white",
+        )
+
+        output = io.BytesIO()
+
+        board.save(
+            output,
+            format="PNG",
+        )
+
+        output.seek(0)
+
+        return output
+
+    # --------------------------------------------------------
+    # DYNAMIC GRID
+    # --------------------------------------------------------
+
+    if count == 1:
+        columns = 1
+
+    elif count == 2:
+        columns = 2
+
+    elif count <= 4:
+        columns = 2
+
+    elif count <= 6:
+        columns = 3
+
+    else:
+        columns = 3
+
+    rows = math.ceil(
+        count / columns
+    )
+
+    # --------------------------------------------------------
+    # BOARD SIZE
+    # --------------------------------------------------------
+
+    board_width = 1200
+
+    # Space around the covers.
+    outer_padding = 70
+
+    # Space between covers.
+    gap = 35
+
+    usable_width = (
+        board_width
+        - (outer_padding * 2)
+        - (gap * (columns - 1))
+    )
+
+    cell_size = usable_width // columns
+
+    board_height = (
+        outer_padding * 2
+        + (cell_size * rows)
+        + (gap * (rows - 1))
+    )
 
     board = Image.new(
         "RGB",
-        (board_size, board_size),
-        "#16070B",
+        (
+            board_width,
+            board_height,
+        ),
+        "white",
     )
 
-    for index in range(9):
+    # --------------------------------------------------------
+    # PLACE COVERS
+    # --------------------------------------------------------
 
-        row = index // 3
-        column = index % 3
+    for index, collection in enumerate(collections):
 
-        x = column * (cell_size + gap)
-        y = row * (cell_size + gap)
+        row = index // columns
+        column = index % columns
 
-        if index >= len(collections):
-            continue
+        x = (
+            outer_padding
+            + column * (cell_size + gap)
+        )
 
-        collection = collections[index]
+        y = (
+            outer_padding
+            + row * (cell_size + gap)
+        )
 
         try:
             image_data = download_image(
@@ -134,21 +212,31 @@ def create_cover_board(collections):
                 io.BytesIO(image_data)
             ).convert("RGB")
 
+            # Covers automatically grow/shrink
+            # depending on the number of collections.
             cover.thumbnail(
-                (cell_size, cell_size)
+                (
+                    cell_size,
+                    cell_size,
+                )
             )
 
-            cover_x = x + (
-                cell_size - cover.width
-            ) // 2
+            cover_x = (
+                x
+                + (cell_size - cover.width) // 2
+            )
 
-            cover_y = y + (
-                cell_size - cover.height
-            ) // 2
+            cover_y = (
+                y
+                + (cell_size - cover.height) // 2
+            )
 
             board.paste(
                 cover,
-                (cover_x, cover_y),
+                (
+                    cover_x,
+                    cover_y,
+                ),
             )
 
         except Exception:
@@ -164,6 +252,10 @@ def create_cover_board(collections):
                 outline="#4E0017",
                 width=3,
             )
+
+    # --------------------------------------------------------
+    # EXPORT
+    # --------------------------------------------------------
 
     output = io.BytesIO()
 
@@ -865,4 +957,4 @@ class Collection(
 async def setup(bot):
     await bot.add_cog(
         Collection(bot)
-            )
+)
