@@ -578,8 +578,6 @@ async def build_collection_board(
 ):
     collection_id = collection.get("id")
 
-    # Cache is per user because the board changes
-    # depending on which cards they own.
     cache_key = (
         collection_id,
         tuple(sorted(owned_ids)),
@@ -633,7 +631,7 @@ class CollectionView(discord.ui.View):
         status=None,
     ):
         super().__init__(
-            timeout=300
+            timeout=None
         )
 
         self.bot = bot
@@ -781,8 +779,7 @@ class CollectionView(discord.ui.View):
 
         self.add_item(next_button)
 
-        # IMPORTANT:
-        # Keep Search when the view refreshes.
+        # Search
         self.add_item(
             SearchButton(self)
         )
@@ -887,7 +884,6 @@ class CollectionSelect(
         self,
         interaction: discord.Interaction,
     ):
-        # Respond immediately.
         await interaction.response.defer(
             ephemeral=True
         )
@@ -1257,6 +1253,7 @@ class Collection(
         bot,
     ):
         self.bot = bot
+        self.active_views = []
 
     # --------------------------------------------------------
     # /collection
@@ -1276,6 +1273,9 @@ class Collection(
             self.bot,
             interaction.user.id,
         )
+
+        # Keep the View alive while the bot is running.
+        self.active_views.append(view)
 
         page_collections = (
             view.get_page_collections()
