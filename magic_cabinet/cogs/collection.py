@@ -1,10 +1,12 @@
 """Magic Cabinet collection command."""
 
+import asyncio
 import io
 import json
 import math
 import sqlite3
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import discord
@@ -12,24 +14,52 @@ from discord import app_commands
 from discord.ext import commands
 from PIL import Image, ImageDraw, ImageOps
 
+
+# ============================================================
+# CONFIG
+# ============================================================
+
+DATABASE = "cabinet.db"
+
+EMBED_COLOR = 0x4E0017
+
+HEADER_URL = (
+    "https://raw.githubusercontent.com/shibu246800/"
+    "Yeosang-s-magic-cabinet-/refs/heads/main/"
+    "magic_cabinet/cogs/profile/"
+    "Untitled13_20261005205021.jpg"
+)
+
+DIVIDER_URL = (
+    "https://raw.githubusercontent.com/shibu246800/"
+    "Yeosang-s-magic-cabinet-/refs/heads/main/"
+    "magic_cabinet/cogs/profile/"
+    "Untitled14_20261003173415.jpg"
+)
+
+DATA_FILE = (
+    Path(__file__).resolve().parent.parent
+    / "data"
+    / "collections.json"
+)
+
+PAGE_SIZE = 9
+
+CARD_WIDTH = 832
+CARD_HEIGHT = 1247
+
+GALLERY_BG = "white"
+
+
+# ============================================================
+# REAL CARD DATA
+# ============================================================
+
 from magic_cabinet.data.normal import CARDS as NORMAL_CARDS
 from magic_cabinet.data.rare import CARDS as RARE_CARDS
 from magic_cabinet.data.epic import CARDS as EPIC_CARDS
 from magic_cabinet.data.limited import CARDS as LIMITED_CARDS
 
-
-EMBED_COLOR = discord.Color.from_str("#4E0017")
-
-HEADER_URL = (
-    "https://raw.githubusercontent.com/"
-    "shibu246800/Yeosang-s-magic-cabinet-/"
-    "refs/heads/main/magic_cabinet/cogs/profile/"
-    "Untitled13_20261005205021.jpg"
-)
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-COLLECTIONS_FILE = BASE_DIR / "data" / "collections.json"
-DATABASE = "cabinet.db"
 
 ALL_CARDS = (
     NORMAL_CARDS
@@ -39,21 +69,49 @@ ALL_CARDS = (
 )
 
 
+# ============================================================
+# IMAGE CACHE
+# ============================================================
+
+_IMAGE_CACHE = {}
+
+_IMAGE_EXECUTOR = ThreadPoolExecutor(
+    max_workers=8,
+    thread_name_prefix="cabinet-image",
+)
+
+
+# ============================================================
+# COLLECTION DATA
+# ============================================================
+
 def load_collections():
-    if not COLLECTIONS_FILE.exists():
+    if not DATA_FILE.exists():
         return []
 
     try:
-        with open(COLLECTIONS_FILE, "r", encoding="utf-8") as file:
+        with open(DATA_FILE, "r", encoding="utf-8") as file:
             data = json.load(file)
 
         return data.get("collections", [])
 
-    except (json.JSONDecodeError, OSError):
+    except Exception:
         return []
 
 
 COLLECTIONS = load_collections()
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def get_collection(collection_id):
+    for collection in COLLECTIONS:
+        if collection.get("id") == collection_id:
+            return collection
+
+    return None
 
 
 def get_collection_cards(collection_id):
@@ -65,425 +123,784 @@ def get_collection_cards(collection_id):
 
     return sorted(
         cards,
-        key=lambda card: int(card.get("id", 0))
+        key=lambda card: int(card.get("id", 0)),
     )
 
 
 def get_owned_card_ids(user_id):
+    connection = sqlite3.connect(DATABASE)
+
     try:
-        with sqlite3.connect(DATABASE) as connection:
-            rows = connection.execute(
-                """
-                SELECT card_id
-                FROM bag
-                WHERE user_id = ?
-                AND quantity > 0
-                """,
-                (user_id,),
-            ).fetchall()
+        cursor = connection.cursor()
 
-        return {int(row[0]) for row in rows}
+        cursor.execute(
+            """
+            SELECT card_id
+            FROM bag
+            WHERE user_id = ?
+            AND quantity > 0
+            """,
+            (user_id,),
+        )
 
-    except (sqlite3.Error, ValueError, TypeError):
-        return set()
+        return {
+            row[0]
+            for row in cursor.fetchall()
+        }
+
+    finally:
+        connection.close()
 
 
-def get_collection_status(collection, user_id):
-    cards = get_collection_cards(collection["id"])
+def get_collection_status(collection_id, owned_ids):
+    cards = get_collection_cards(collection_id)
 
     if not cards:
-        return "Unattended"
+        return "Unattended", 0
 
-    owned = get_owned_card_ids(user_id)
-
-    count = sum(
+    owned_count = sum(
         1
         for card in cards
-        if int(card["id"]) in owned
+        if card.get("id") in owned_ids
     )
 
-    if count == 0:
-        return "Unattended"
+    if owned_count == 0:
+        return "Unattended", 0
 
-    if count < 6:
-        return "Ongoing"
+    if owned_count < 6:
+        return "Ongoing", owned_count
 
-    return "Completed"
+    return "Completed", owned_count
 
 
-def get_filtered_collections(
-    user_id,
-    vault=None,
-    status=None,
-):
-    collections = COLLECTIONS[:]
+def status_emoji(status):
+    if status == "Completed":
+        return "🟢"
+
+    if status == "Ongoing":
+        return "🟡"
+
+    return "⚪"
+
+
+def filtered_collections(vault=None, status=None, user_id=None):
+    result = list(COLLECTIONS)
+
+    owned_ids = set()
+
+    if user_id is not None and status:
+        owned_ids = get_owned_card_ids(user_id)
 
     if vault:
-        collections = [
+        result = [
             collection
-            for collection in collections
-            if collection.get("vault", "").upper() == vault.upper()
+            for collection in result
+            if collection.get("vault") == vault
         ]
 
     if status:
-        collections = [
+        result = [
             collection
-            for collection in collections
+            for collection in result
             if get_collection_status(
-                collection,
-                user_id,
-            ) == status
+                collection.get("id"),
+                owned_ids,
+            )[0] == status
         ]
 
-    return collections
+    return result
 
 
-def download_image(url):
+# ============================================================
+# FAST IMAGE LOADING
+# ============================================================
+
+def _download_image(url):
     if not url:
         return None
+
+    if url in _IMAGE_CACHE:
+        return _IMAGE_CACHE[url].copy()
 
     try:
         request = urllib.request.Request(
             url,
-            headers={"User-Agent": "Mozilla/5.0"},
+            headers={
+                "User-Agent": "Yeosang-Magic-Cabinet/1.0",
+            },
         )
 
         with urllib.request.urlopen(
             request,
-            timeout=10,
+            timeout=8,
         ) as response:
             data = response.read()
 
-        return Image.open(
+        image = Image.open(
             io.BytesIO(data)
         ).convert("RGB")
+
+        _IMAGE_CACHE[url] = image.copy()
+
+        return image
 
     except Exception:
         return None
 
 
-def create_cover_board(collections):
+async def get_image(url):
+    loop = asyncio.get_running_loop()
+
+    return await loop.run_in_executor(
+        _IMAGE_EXECUTOR,
+        _download_image,
+        url,
+    )
+
+
+# ============================================================
+# GALLERY IMAGE
+# ============================================================
+
+def _build_gallery_sync(collections):
     if not collections:
         image = Image.new(
             "RGB",
-            (1200, 400),
-            "white",
+            (1200, 600),
+            GALLERY_BG,
         )
 
         draw = ImageDraw.Draw(image)
 
         draw.text(
-            (600, 200),
+            (600, 300),
             "No collections found.",
             fill="#4E0017",
             anchor="mm",
         )
 
         output = io.BytesIO()
-        image.save(output, format="PNG")
+
+        image.save(
+            output,
+            format="PNG",
+        )
+
         output.seek(0)
 
-        return output
+        return output.getvalue()
 
     count = len(collections)
 
     if count == 1:
         columns = 1
+
     elif count <= 4:
         columns = 2
+
     else:
         columns = 3
 
     rows = math.ceil(count / columns)
 
-    board_width = 1200
-    padding = 70
-    gap = 35
+    cell_width = 850
+    cell_height = 650
 
-    usable_width = (
-        board_width
-        - padding * 2
-        - gap * (columns - 1)
-    )
+    padding = 45
+    gap = 30
 
-    cell_width = usable_width // columns
-    cover_height = int(cell_width * 1.4)
-
-    board_height = (
+    width = (
         padding * 2
-        + cover_height * rows
-        + gap * (rows - 1)
+        + columns * cell_width
+        + (columns - 1) * gap
     )
 
-    board = Image.new(
+    height = (
+        padding * 2
+        + rows * cell_height
+        + (rows - 1) * gap
+    )
+
+    canvas = Image.new(
         "RGB",
-        (board_width, board_height),
-        "white",
+        (width, height),
+        GALLERY_BG,
     )
 
     for index, collection in enumerate(collections):
 
-        cover = download_image(
+        cover = _download_image(
             collection.get("cover")
         )
 
         if cover is None:
             continue
 
-        cover = ImageOps.fit(
+        cover.thumbnail(
+            (
+                cell_width - 20,
+                cell_height - 20,
+            ),
+            Image.Resampling.LANCZOS,
+        )
+
+        x = (
+            padding
+            + (index % columns)
+            * (cell_width + gap)
+        )
+
+        y = (
+            padding
+            + (index // columns)
+            * (cell_height + gap)
+        )
+
+        paste_x = (
+            x
+            + (cell_width - cover.width) // 2
+        )
+
+        paste_y = (
+            y
+            + (cell_height - cover.height) // 2
+        )
+
+        canvas.paste(
             cover,
-            (cell_width, cover_height),
-            method=Image.Resampling.LANCZOS,
-        )
-
-        row = index // columns
-        column = index % columns
-
-        x = padding + column * (
-            cell_width + gap
-        )
-
-        y = padding + row * (
-            cover_height + gap
-        )
-
-        board.paste(
-            cover,
-            (x, y),
+            (
+                paste_x,
+                paste_y,
+            ),
         )
 
     output = io.BytesIO()
-    board.save(output, format="PNG")
+
+    canvas.save(
+        output,
+        format="PNG",
+        optimize=True,
+    )
+
     output.seek(0)
 
-    return output
+    return output.getvalue()
 
 
-def build_collection_board(
+async def build_gallery(collections):
+    loop = asyncio.get_running_loop()
+
+    # Download covers concurrently first.
+    urls = [
+        collection.get("cover")
+        for collection in collections
+        if collection.get("cover")
+    ]
+
+    await asyncio.gather(
+        *(get_image(url) for url in urls)
+    )
+
+    return await loop.run_in_executor(
+        _IMAGE_EXECUTOR,
+        _build_gallery_sync,
+        collections,
+    )
+
+
+# ============================================================
+# COLLECTION BOARD
+# ============================================================
+
+def _build_collection_board_sync(
     collection,
-    user_id,
+    owned_ids,
 ):
-    collection_id = collection["id"]
-    collection_name = collection["name"]
-
     cards = get_collection_cards(
-        collection_id
+        collection.get("id")
     )
 
-    owned = get_owned_card_ids(
-        user_id
-    )
+    canvas_width = CARD_WIDTH * 3 + 80
+    canvas_height = CARD_HEIGHT * 3 + 160
 
-    board_width = 1200
-    padding = 70
-    gap = 35
-    columns = 3
-
-    card_width = (
-        board_width
-        - padding * 2
-        - gap * 2
-    ) // columns
-
-    card_height = int(
-        card_width * 1.4
-    )
-
-    row_height = card_height + gap
-
-    board_height = (
-        padding
-        + row_height * 3
-        + 100
-    )
-
-    board = Image.new(
+    canvas = Image.new(
         "RGB",
         (
-            board_width,
-            board_height,
+            canvas_width,
+            canvas_height,
         ),
         "white",
     )
 
-    draw = ImageDraw.Draw(board)
+    draw = ImageDraw.Draw(canvas)
 
     for index in range(6):
 
-        x = padding + (
-            index % 3
-        ) * (
-            card_width + gap
+        x = (
+            20
+            + (index % 3)
+            * (CARD_WIDTH + 20)
         )
 
-        y = padding + (
-            index // 3
-        ) * row_height
+        y = (
+            20
+            + (index // 3)
+            * (CARD_HEIGHT + 20)
+        )
 
-        if index >= len(cards):
+        if index < len(cards):
+
+            card = cards[index]
+
+            card_id = card.get("id")
+
+            image = _download_image(
+                card.get("image")
+            )
+
+            if image is None:
+                image = Image.new(
+                    "RGB",
+                    (
+                        CARD_WIDTH,
+                        CARD_HEIGHT,
+                    ),
+                    "#DDDDDD",
+                )
+
+            image = ImageOps.fit(
+                image,
+                (
+                    CARD_WIDTH,
+                    CARD_HEIGHT,
+                ),
+                method=Image.Resampling.LANCZOS,
+            )
+
+            if card_id not in owned_ids:
+                image = ImageOps.grayscale(
+                    image
+                ).convert("RGB")
+
+            canvas.paste(
+                image,
+                (x, y),
+            )
+
+        else:
             draw.rectangle(
                 (
                     x,
                     y,
-                    x + card_width,
-                    y + card_height,
+                    x + CARD_WIDTH,
+                    y + CARD_HEIGHT,
                 ),
-                fill="#E8E8E8",
-                outline="#4E0017",
-                width=3,
+                fill="#EEEEEE",
+                outline="#AAAAAA",
+                width=4,
             )
-            continue
-
-        card = cards[index]
-
-        image = download_image(
-            card.get("image", "")
-        )
-
-        if image is None:
-            draw.rectangle(
-                (
-                    x,
-                    y,
-                    x + card_width,
-                    y + card_height,
-                ),
-                fill="#E8E8E8",
-                outline="#4E0017",
-                width=3,
-            )
-            continue
-
-        image = ImageOps.fit(
-            image,
-            (
-                card_width,
-                card_height,
-            ),
-            method=Image.Resampling.LANCZOS,
-        )
-
-        if int(card["id"]) not in owned:
-            image = ImageOps.grayscale(
-                image
-            ).convert("RGB")
-
-        board.paste(
-            image,
-            (x, y),
-        )
 
     # Legendary slot
-    legendary_x = padding + (
-        card_width + gap
+    legendary_x = (
+        (canvas_width - CARD_WIDTH) // 2
     )
 
-    legendary_y = padding + (
-        row_height * 2
+    legendary_y = (
+        20
+        + 2 * (CARD_HEIGHT + 20)
     )
 
     draw.rectangle(
         (
             legendary_x,
             legendary_y,
-            legendary_x + card_width,
-            legendary_y + card_height,
+            legendary_x + CARD_WIDTH,
+            legendary_y + CARD_HEIGHT,
         ),
-        fill="black",
+        fill="#111111",
+        outline="#4E0017",
+        width=8,
     )
 
     draw.text(
         (
-            board_width // 2,
-            board_height - 45,
+            legendary_x + CARD_WIDTH // 2,
+            legendary_y + CARD_HEIGHT // 2,
         ),
-        f"{collection_id} • {collection_name}",
+        "LEGENDARY",
+        fill="#D4AF37",
+        anchor="mm",
+    )
+
+    # Bottom label
+    label = (
+        f"{collection.get('id')}  •  "
+        f"{collection.get('name', 'Unknown Collection')}"
+    )
+
+    draw.rectangle(
+        (
+            0,
+            canvas_height - 80,
+            canvas_width,
+            canvas_height,
+        ),
+        fill="white",
+    )
+
+    draw.text(
+        (
+            canvas_width // 2,
+            canvas_height - 40,
+        ),
+        label,
         fill="#4E0017",
         anchor="mm",
     )
 
     output = io.BytesIO()
-    board.save(output, format="PNG")
+
+    canvas.save(
+        output,
+        format="PNG",
+        optimize=True,
+    )
+
     output.seek(0)
 
-    return output
+    return output.getvalue()
 
 
-class CollectionSelect(discord.ui.Select):
+async def build_collection_board(
+    collection,
+    owned_ids,
+):
+    loop = asyncio.get_running_loop()
 
-    def __init__(self, view):
-        self.collection_view = view
+    urls = [
+        card.get("image")
+        for card in get_collection_cards(
+            collection.get("id")
+        )
+        if card.get("image")
+    ]
 
-        options = [
-            discord.SelectOption(
-                label=collection["name"][:100],
-                description=(
-                    f'{collection["id"]} • '
-                    f'{collection["series"]}'
-                )[:100],
-                value=collection["id"],
-            )
-            for collection in view.current_collections
+    await asyncio.gather(
+        *(get_image(url) for url in urls)
+    )
+
+    return await loop.run_in_executor(
+        _IMAGE_EXECUTOR,
+        _build_collection_board_sync,
+        collection,
+        owned_ids,
+    )
+
+
+# ============================================================
+# MAIN VIEW
+# ============================================================
+
+class CollectionView(discord.ui.View):
+
+    def __init__(
+        self,
+        bot,
+        user_id,
+        page=0,
+        vault=None,
+        status=None,
+    ):
+        super().__init__(
+            timeout=300
+        )
+
+        self.bot = bot
+        self.user_id = user_id
+        self.page = page
+        self.vault = vault
+        self.status = status
+
+        self.current_collections = []
+
+        self.refresh_components()
+
+    # --------------------------------------------------------
+    # FILTERED DATA
+    # --------------------------------------------------------
+
+    def get_filtered(self):
+        return filtered_collections(
+            vault=self.vault,
+            status=self.status,
+            user_id=self.user_id,
+        )
+
+    # --------------------------------------------------------
+    # PAGE COUNT
+    # --------------------------------------------------------
+
+    def page_count(self):
+        total = len(self.get_filtered())
+
+        return max(
+            1,
+            math.ceil(
+                total / PAGE_SIZE
+            ),
+        )
+
+    # --------------------------------------------------------
+    # PAGE DATA
+    # --------------------------------------------------------
+
+    def get_page_collections(self):
+        collections = self.get_filtered()
+
+        total_pages = self.page_count()
+
+        self.page = max(
+            0,
+            min(
+                self.page,
+                total_pages - 1,
+            ),
+        )
+
+        start = self.page * PAGE_SIZE
+
+        return collections[
+            start:start + PAGE_SIZE
         ]
 
-        if not options:
-            options = [
-                discord.SelectOption(
-                    label="No collections available",
-                    value="none",
+    # --------------------------------------------------------
+    # COMPONENTS
+    # --------------------------------------------------------
+
+    def refresh_components(self):
+        self.clear_items()
+
+        page_collections = (
+            self.get_page_collections()
+        )
+
+        self.current_collections = (
+            page_collections
+        )
+
+        # Open collection select
+        if page_collections:
+
+            options = []
+
+            for collection in page_collections:
+
+                options.append(
+                    discord.SelectOption(
+                        label=(
+                            f"{collection.get('id')} • "
+                            f"{collection.get('name', 'Collection')}"
+                        )[:100],
+                        value=collection.get("id"),
+                        description=(
+                            f"{collection.get('series', '')} • "
+                            f"{collection.get('vault', '')}"
+                        )[:100],
+                    )
                 )
-            ]
+
+            select = CollectionSelect(
+                self,
+                options,
+            )
+
+            self.add_item(select)
+
+        # Vault buttons
+        for vault_code, label in (
+            ("BB", "🌙 BB"),
+            ("GG", "🌹 GG"),
+            ("BG", "🪡 BG"),
+        ):
+
+            button = VaultButton(
+                self,
+                vault_code,
+                label,
+            )
+
+            if self.vault == vault_code:
+                button.style = discord.ButtonStyle.danger
+
+            self.add_item(button)
+
+        # Status
+        status_select = StatusSelect(
+            self,
+            self.status,
+        )
+
+        self.add_item(status_select)
+
+        # Previous
+        previous = PreviousButton(self)
+
+        previous.disabled = (
+            self.page <= 0
+        )
+
+        self.add_item(previous)
+
+        # Next
+        next_button = NextButton(self)
+
+        next_button.disabled = (
+            self.page >= self.page_count() - 1
+        )
+
+        self.add_item(next_button)
+
+    # --------------------------------------------------------
+    # REFRESH
+    # --------------------------------------------------------
+
+    async def refresh_message(
+        self,
+        interaction,
+    ):
+        # Components must be rebuilt before editing.
+        self.refresh_components()
+
+        page_collections = (
+            self.current_collections
+        )
+
+        image_bytes = await build_gallery(
+            page_collections
+        )
+
+        file = discord.File(
+            io.BytesIO(image_bytes),
+            filename="collection_gallery.png",
+        )
+
+        embed = discord.Embed(
+            title="The Collection",
+            description=(
+                f"Page **{self.page + 1} / "
+                f"{self.page_count()}**\n"
+                f"Collections **"
+                f"{self.page * PAGE_SIZE + 1}"
+                f"–"
+                f"{min((self.page + 1) * PAGE_SIZE, len(self.get_filtered()))}"
+                f"**"
+            ),
+            color=EMBED_COLOR,
+        )
+
+        embed.set_image(
+            url="attachment://collection_gallery.png"
+        )
+
+        embed.set_footer(
+            text=(
+                "Select a collection to open it."
+            )
+        )
+
+        await interaction.edit_original_response(
+            embeds=[
+                embed,
+            ],
+            attachments=[
+                file,
+            ],
+            view=self,
+        )
+
+
+# ============================================================
+# OPEN COLLECTION SELECT
+# ============================================================
+
+class CollectionSelect(
+    discord.ui.Select
+):
+
+    def __init__(
+        self,
+        parent_view,
+        options,
+    ):
+        self.parent_view = parent_view
 
         super().__init__(
             placeholder="Open Collection",
-            options=options,
             min_values=1,
             max_values=1,
+            options=options,
             row=0,
         )
 
-    async def callback(self, interaction):
-
-        collection_id = self.values[0]
-
-        if collection_id == "none":
-            await interaction.response.send_message(
-                "No collections are available.",
-                ephemeral=True,
-            )
-            return
-
-        collection = next(
-            (
-                item
-                for item in COLLECTIONS
-                if item["id"] == collection_id
-            ),
-            None,
-        )
-
-        if not collection:
-            await interaction.response.send_message(
-                "Collection not found.",
-                ephemeral=True,
-            )
-            return
-
+    async def callback(
+        self,
+        interaction: discord.Interaction,
+    ):
+        # FIRST ACTION = DEFER.
+        # This prevents the interaction from expiring
+        # while the board image is being generated.
         await interaction.response.defer(
             ephemeral=True
         )
 
-        image = build_collection_board(
-            collection,
+        collection_id = self.values[0]
+
+        collection = get_collection(
+            collection_id
+        )
+
+        if collection is None:
+
+            await interaction.followup.send(
+                "Collection not found.",
+                ephemeral=True,
+            )
+
+            return
+
+        owned_ids = await asyncio.to_thread(
+            get_owned_card_ids,
             interaction.user.id,
         )
 
+        image_bytes = await build_collection_board(
+            collection,
+            owned_ids,
+        )
+
         file = discord.File(
-            image,
+            io.BytesIO(image_bytes),
             filename="collection.png",
         )
 
+        status, count = await asyncio.to_thread(
+            get_collection_status,
+            collection_id,
+            owned_ids,
+        )
+
         embed = discord.Embed(
+            title=collection.get(
+                "name",
+                "Collection",
+            ),
+            description=(
+                f"**{collection.get('id')}**\n"
+                f"{collection.get('series', '')}\n\n"
+                f"{status_emoji(status)} "
+                f"**{status}** • "
+                f"**{count}/6**"
+            ),
             color=EMBED_COLOR,
         )
 
@@ -492,11 +909,203 @@ class CollectionSelect(discord.ui.Select):
         )
 
         await interaction.followup.send(
-            embed=embed,
-            file=file,
+            embeds=[
+                embed,
+            ],
+            files=[
+                file,
+            ],
             ephemeral=True,
         )
 
+
+# ============================================================
+# VAULT BUTTON
+# ============================================================
+
+class VaultButton(
+    discord.ui.Button
+):
+
+    def __init__(
+        self,
+        parent_view,
+        vault_code,
+        label,
+    ):
+        self.parent_view = parent_view
+        self.vault_code = vault_code
+
+        super().__init__(
+            label=label,
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction,
+    ):
+        await interaction.response.defer()
+
+        if self.parent_view.vault == self.vault_code:
+            self.parent_view.vault = None
+
+        else:
+            self.parent_view.vault = (
+                self.vault_code
+            )
+
+        self.parent_view.page = 0
+
+        await self.parent_view.refresh_message(
+            interaction
+        )
+
+
+# ============================================================
+# STATUS SELECT
+# ============================================================
+
+class StatusSelect(
+    discord.ui.Select
+):
+
+    def __init__(
+        self,
+        parent_view,
+        current_status,
+    ):
+        self.parent_view = parent_view
+
+        options = [
+            discord.SelectOption(
+                label="All Collections",
+                value="ALL",
+                default=current_status is None,
+            ),
+            discord.SelectOption(
+                label="Completed",
+                value="Completed",
+                default=current_status == "Completed",
+            ),
+            discord.SelectOption(
+                label="Ongoing",
+                value="Ongoing",
+                default=current_status == "Ongoing",
+            ),
+            discord.SelectOption(
+                label="Unattended",
+                value="Unattended",
+                default=current_status == "Unattended",
+            ),
+        ]
+
+        super().__init__(
+            placeholder="Filter by Status",
+            options=options,
+            row=2,
+        )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction,
+    ):
+        await interaction.response.defer()
+
+        value = self.values[0]
+
+        if value == "ALL":
+            self.parent_view.status = None
+
+        else:
+            self.parent_view.status = value
+
+        self.parent_view.page = 0
+
+        await self.parent_view.refresh_message(
+            interaction
+        )
+
+
+# ============================================================
+# PREVIOUS
+# ============================================================
+
+class PreviousButton(
+    discord.ui.Button
+):
+
+    def __init__(
+        self,
+        parent_view,
+    ):
+        self.parent_view = parent_view
+
+        super().__init__(
+            label="‹ Previous",
+            style=discord.ButtonStyle.secondary,
+            row=3,
+        )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction,
+    ):
+        await interaction.response.defer()
+
+        if self.parent_view.page <= 0:
+            return
+
+        self.parent_view.page -= 1
+
+        await self.parent_view.refresh_message(
+            interaction
+        )
+
+
+# ============================================================
+# NEXT
+# ============================================================
+
+class NextButton(
+    discord.ui.Button
+    ):
+
+    def __init__(
+        self,
+        parent_view,
+    ):
+        self.parent_view = parent_view
+
+        super().__init__(
+            label="Next ›",
+            style=discord.ButtonStyle.secondary,
+            row=3,
+        )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction,
+    ):
+        await interaction.response.defer()
+
+        if (
+            self.parent_view.page
+            >= self.parent_view.page_count() - 1
+        ):
+            return
+
+        self.parent_view.page += 1
+
+        await self.parent_view.refresh_message(
+            interaction
+        )
+
+
+# ============================================================
+# SEARCH MODAL
+# ============================================================
 
 class CollectionSearchModal(
     discord.ui.Modal,
@@ -510,49 +1119,74 @@ class CollectionSearchModal(
         max_length=30,
     )
 
-    def __init__(self, view):
+    def __init__(
+        self,
+        parent_view,
+    ):
         super().__init__()
-        self.collection_view = view
 
-    async def on_submit(self, interaction):
+        self.parent_view = parent_view
 
-        search_id = (
-            self.collection_id.value
-            .strip()
-            .upper()
-        )
-
-        collection = next(
-            (
-                item
-                for item in COLLECTIONS
-                if item["id"].upper() == search_id
-            ),
-            None,
-        )
-
-        if not collection:
-            await interaction.response.send_message(
-                f"Collection `{search_id}` was not found.",
-                ephemeral=True,
-            )
-            return
-
+    async def on_submit(
+        self,
+        interaction: discord.Interaction,
+    ):
         await interaction.response.defer(
             ephemeral=True
         )
 
-        image = build_collection_board(
-            collection,
+        collection_id = (
+            str(self.collection_id)
+            .strip()
+            .upper()
+        )
+
+        collection = get_collection(
+            collection_id
+        )
+
+        if collection is None:
+
+            await interaction.followup.send(
+                f"Collection **{collection_id}** was not found.",
+                ephemeral=True,
+            )
+
+            return
+
+        owned_ids = await asyncio.to_thread(
+            get_owned_card_ids,
             interaction.user.id,
         )
 
+        image_bytes = await build_collection_board(
+            collection,
+            owned_ids,
+        )
+
         file = discord.File(
-            image,
+            io.BytesIO(image_bytes),
             filename="collection.png",
         )
 
+        status, count = await asyncio.to_thread(
+            get_collection_status,
+            collection_id,
+            owned_ids,
+        )
+
         embed = discord.Embed(
+            title=collection.get(
+                "name",
+                "Collection",
+            ),
+            description=(
+                f"**{collection.get('id')}**\n"
+                f"{collection.get('series', '')}\n\n"
+                f"{status_emoji(status)} "
+                f"**{status}** • "
+                f"**{count}/6**"
+            ),
             color=EMBED_COLOR,
         )
 
@@ -561,387 +1195,168 @@ class CollectionSearchModal(
         )
 
         await interaction.followup.send(
-            embed=embed,
-            file=file,
-            ephemeral=True,
-        )
-
-
-class StatusSelect(discord.ui.Select):
-
-    def __init__(self, view):
-        self.collection_view = view
-
-        super().__init__(
-            placeholder="Choose Status",
-            options=[
-                discord.SelectOption(
-                    label="Completed",
-                    value="Completed",
-                ),
-                discord.SelectOption(
-                    label="Ongoing",
-                    value="Ongoing",
-                ),
-                discord.SelectOption(
-                    label="Unattended",
-                    value="Unattended",
-                ),
+            embeds=[
+                embed,
             ],
-            min_values=1,
-            max_values=1,
-        )
-
-    async def callback(self, interaction):
-
-        self.collection_view.status = (
-            self.values[0]
-        )
-
-        self.collection_view.current_page = 0
-
-        await interaction.response.defer(
-            ephemeral=True
-        )
-
-        await self.collection_view.refresh(
-            interaction
-        )
-
-
-class StatusView(discord.ui.View):
-
-    def __init__(self, collection_view):
-        super().__init__(timeout=60)
-
-        self.add_item(
-            StatusSelect(collection_view)
-        )
-
-
-class CollectionView(discord.ui.View):
-
-    def __init__(
-        self,
-        user_id,
-        vault=None,
-        status=None,
-        current_page=0,
-    ):
-        super().__init__(timeout=300)
-
-        self.user_id = user_id
-        self.vault = vault
-        self.status = status
-        self.current_page = current_page
-
-        self.current_collections = []
-
-        self.refresh_buttons()
-
-    def refresh_buttons(self):
-
-        self.clear_items()
-
-        filtered = get_filtered_collections(
-            self.user_id,
-            self.vault,
-            self.status,
-        )
-
-        start = self.current_page * 9
-        end = start + 9
-
-        self.current_collections = filtered[
-            start:end
-        ]
-
-        self.add_item(
-            CollectionSelect(self)
-        )
-
-        self.add_item(
-            VaultButton(
-                self,
-                "BB",
-                "🌙 BB",
-            )
-        )
-
-        self.add_item(
-            VaultButton(
-                self,
-                "GG",
-                "🌹 GG",
-            )
-        )
-
-        self.add_item(
-            VaultButton(
-                self,
-                "BG",
-                "🪡 BG",
-            )
-        )
-
-        self.add_item(
-            SearchButton(self)
-        )
-
-        self.add_item(
-            StatusButton(self)
-        )
-
-        if self.current_page > 0:
-            self.add_item(
-                PreviousButton(self)
-            )
-
-        total_pages = max(
-            1,
-            math.ceil(len(filtered) / 9),
-        )
-
-        if self.current_page < total_pages - 1:
-            self.add_item(
-                NextButton(self)
-            )
-
-    async def refresh(self, interaction):
-
-        filtered = get_filtered_collections(
-            self.user_id,
-            self.vault,
-            self.status,
-        )
-
-        total_pages = max(
-            1,
-            math.ceil(len(filtered) / 9),
-        )
-
-        self.current_page = min(
-            self.current_page,
-            total_pages - 1,
-        )
-
-        self.refresh_buttons()
-
-        image = create_cover_board(
-            self.current_collections
-        )
-
-        file = discord.File(
-            image,
-            filename="collections.png",
-        )
-
-        embed = discord.Embed(
-            color=EMBED_COLOR,
-        )
-
-        embed.set_image(
-            url="attachment://collections.png"
-        )
-
-        embed.set_footer(
-            text=(
-                f"Page {self.current_page + 1}"
-                f" / {total_pages}"
-            )
-        )
-
-        await interaction.edit_original_response(
-            embed=embed,
-            attachments=[file],
-            view=self,
-        )
-
-
-class VaultButton(discord.ui.Button):
-
-    def __init__(
-        self,
-        view,
-        vault,
-        label,
-    ):
-        super().__init__(
-            label=label,
-            style=discord.ButtonStyle.secondary,
-            row=1,
-        )
-
-        self.collection_view = view
-        self.vault = vault
-
-    async def callback(self, interaction):
-
-        if self.collection_view.vault == self.vault:
-            self.collection_view.vault = None
-        else:
-            self.collection_view.vault = self.vault
-
-        self.collection_view.status = None
-        self.collection_view.current_page = 0
-
-        await interaction.response.defer()
-
-        await self.collection_view.refresh(
-            interaction
-        )
-
-
-class SearchButton(discord.ui.Button):
-
-    def __init__(self, view):
-        super().__init__(
-            label="Search",
-            style=discord.ButtonStyle.secondary,
-            row=1,
-        )
-
-        self.collection_view = view
-
-    async def callback(self, interaction):
-        await interaction.response.send_modal(
-            CollectionSearchModal(
-                self.collection_view
-            )
-        )
-
-
-class StatusButton(discord.ui.Button):
-
-    def __init__(self, view):
-        super().__init__(
-            label="Status",
-            style=discord.ButtonStyle.secondary,
-            row=1,
-        )
-
-        self.collection_view = view
-
-    async def callback(self, interaction):
-
-        await interaction.response.send_message(
-            "Choose a collection status:",
-            view=StatusView(
-                self.collection_view
-            ),
+            files=[
+                file,
+            ],
             ephemeral=True,
         )
 
 
-class PreviousButton(discord.ui.Button):
+# ============================================================
+# COLLECTION COG
+# ============================================================
 
-    def __init__(self, view):
-        super().__init__(
-            label="Previous",
-            style=discord.ButtonStyle.secondary,
-            row=2,
-        )
+class Collection(
+    commands.Cog
+):
 
-        self.collection_view = view
-
-    async def callback(self, interaction):
-
-        self.collection_view.current_page -= 1
-
-        await interaction.response.defer()
-
-        await self.collection_view.refresh(
-            interaction
-        )
-
-
-class NextButton(discord.ui.Button):
-
-    def __init__(self, view):
-        super().__init__(
-            label="Next",
-            style=discord.ButtonStyle.secondary,
-            row=2,
-        )
-
-        self.collection_view = view
-
-    async def callback(self, interaction):
-
-        self.collection_view.current_page += 1
-
-        await interaction.response.defer()
-
-        await self.collection_view.refresh(
-            interaction
-        )
-
-
-class Collection(commands.Cog):
-
-    def __init__(self, bot):
+    def __init__(
+        self,
+        bot,
+    ):
         self.bot = bot
+
+    # --------------------------------------------------------
+    # /collection
+    # --------------------------------------------------------
 
     @app_commands.command(
         name="collection",
-        description="View your Magic Cabinet collections.",
+        description="Browse the Magic Cabinet collections.",
     )
     async def collection(
         self,
         interaction: discord.Interaction,
     ):
-
+        # DEFER IMMEDIATELY.
         await interaction.response.defer()
 
         view = CollectionView(
-            user_id=interaction.user.id
+            self.bot,
+            interaction.user.id,
         )
 
-        image = create_cover_board(
-            view.current_collections
+        page_collections = (
+            view.get_page_collections()
+        )
+
+        image_bytes = await build_gallery(
+            page_collections
         )
 
         file = discord.File(
-            image,
-            filename="collections.png",
+            io.BytesIO(image_bytes),
+            filename="collection_gallery.png",
         )
 
+        total = len(
+            view.get_filtered()
+        )
+
+        if total:
+            start = (
+                view.page * PAGE_SIZE + 1
+            )
+
+            end = min(
+                (view.page + 1) * PAGE_SIZE,
+                total,
+            )
+
+            range_text = (
+                f"Collections **{start}–{end}**"
+            )
+
+        else:
+            range_text = "No collections found."
+
         embed = discord.Embed(
+            title="The Collection",
+            description=(
+                f"Page **1 / {view.page_count()}**\n"
+                f"{range_text}"
+            ),
             color=EMBED_COLOR,
         )
 
         embed.set_image(
-            url="attachment://collections.png"
-        )
-
-        total_pages = max(
-            1,
-            math.ceil(len(COLLECTIONS) / 9),
+            url="attachment://collection_gallery.png"
         )
 
         embed.set_footer(
-            text=f"Page 1 / {total_pages}"
+            text="Select a collection to open it."
         )
 
-        header_embed = discord.Embed(
-            color=EMBED_COLOR
+        # Search button is deliberately separate
+        # so Open Collection stays easy to use.
+        search_button = SearchButton(
+            view
         )
 
-        header_embed.set_image(
-            url=HEADER_URL
+        view.add_item(
+            search_button
         )
 
         await interaction.followup.send(
             embeds=[
-                header_embed,
+                discord.Embed(
+                    color=EMBED_COLOR,
+                ).set_image(
+                    url=HEADER_URL
+                ),
                 embed,
+                discord.Embed(
+                    color=EMBED_COLOR,
+                ).set_image(
+                    url=DIVIDER_URL
+                ),
             ],
             file=file,
             view=view,
         )
 
 
+# ============================================================
+# SEARCH BUTTON
+# ============================================================
+
+class SearchButton(
+    discord.ui.Button
+):
+
+    def __init__(
+        self,
+        parent_view,
+    ):
+        self.parent_view = parent_view
+
+        super().__init__(
+            label="Search",
+            emoji="🔎",
+            style=discord.ButtonStyle.secondary,
+            row=3,
+        )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction,
+    ):
+        # Modal opens instantly.
+        await interaction.response.send_modal(
+            CollectionSearchModal(
+                self.parent_view
+            )
+        )
+
+
+# ============================================================
+# SETUP
+# ============================================================
+
 async def setup(bot):
     await bot.add_cog(
         Collection(bot)
-)
+        )
