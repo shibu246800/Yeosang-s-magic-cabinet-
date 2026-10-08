@@ -75,6 +75,8 @@ ALL_CARDS = (
 
 _IMAGE_CACHE = {}
 
+_COLLECTION_BOARD_CACHE = {}
+
 _IMAGE_EXECUTOR = ThreadPoolExecutor(
     max_workers=8,
     thread_name_prefix="cabinet-image",
@@ -390,7 +392,6 @@ def _build_gallery_sync(collections):
 async def build_gallery(collections):
     loop = asyncio.get_running_loop()
 
-    # Download covers concurrently first.
     urls = [
         collection.get("cover")
         for collection in collections
@@ -575,12 +576,28 @@ async def build_collection_board(
     collection,
     owned_ids,
 ):
+    collection_id = collection.get("id")
+
+    # Cache is per user because the board changes
+    # depending on which cards they own.
+    cache_key = (
+        collection_id,
+        tuple(sorted(owned_ids)),
+    )
+
+    cached = _COLLECTION_BOARD_CACHE.get(
+        cache_key
+    )
+
+    if cached is not None:
+        return cached
+
     loop = asyncio.get_running_loop()
 
     urls = [
         card.get("image")
         for card in get_collection_cards(
-            collection.get("id")
+            collection_id
         )
         if card.get("image")
     ]
@@ -589,12 +606,16 @@ async def build_collection_board(
         *(get_image(url) for url in urls)
     )
 
-    return await loop.run_in_executor(
+    image_bytes = await loop.run_in_executor(
         _IMAGE_EXECUTOR,
         _build_collection_board_sync,
         collection,
         owned_ids,
     )
+
+    _COLLECTION_BOARD_CACHE[cache_key] = image_bytes
+
+    return image_bytes
 
 
 # ============================================================
@@ -760,6 +781,12 @@ class CollectionView(discord.ui.View):
 
         self.add_item(next_button)
 
+        # IMPORTANT:
+        # Keep Search when the view refreshes.
+        self.add_item(
+            SearchButton(self)
+        )
+
     # --------------------------------------------------------
     # REFRESH
     # --------------------------------------------------------
@@ -768,7 +795,6 @@ class CollectionView(discord.ui.View):
         self,
         interaction,
     ):
-        # Components must be rebuilt before editing.
         self.refresh_components()
 
         page_collections = (
@@ -784,16 +810,33 @@ class CollectionView(discord.ui.View):
             filename="collection_gallery.png",
         )
 
+        total = len(
+            self.get_filtered()
+        )
+
+        if total:
+            start = (
+                self.page * PAGE_SIZE + 1
+            )
+
+            end = min(
+                (self.page + 1) * PAGE_SIZE,
+                total,
+            )
+
+            range_text = (
+                f"Collections **{start}–{end}**"
+            )
+
+        else:
+            range_text = "No collections found."
+
         embed = discord.Embed(
             title="The Collection",
             description=(
                 f"Page **{self.page + 1} / "
                 f"{self.page_count()}**\n"
-                f"Collections **"
-                f"{self.page * PAGE_SIZE + 1}"
-                f"–"
-                f"{min((self.page + 1) * PAGE_SIZE, len(self.get_filtered()))}"
-                f"**"
+                f"{range_text}"
             ),
             color=EMBED_COLOR,
         )
@@ -803,9 +846,7 @@ class CollectionView(discord.ui.View):
         )
 
         embed.set_footer(
-            text=(
-                "Select a collection to open it."
-            )
+            text="Select a collection to open it."
         )
 
         await interaction.edit_original_response(
@@ -846,9 +887,7 @@ class CollectionSelect(
         self,
         interaction: discord.Interaction,
     ):
-        # FIRST ACTION = DEFER.
-        # This prevents the interaction from expiring
-        # while the board image is being generated.
+        # Respond immediately.
         await interaction.response.defer(
             ephemeral=True
         )
@@ -1070,7 +1109,7 @@ class PreviousButton(
 
 class NextButton(
     discord.ui.Button
-    ):
+):
 
     def __init__(
         self,
@@ -1231,7 +1270,6 @@ class Collection(
         self,
         interaction: discord.Interaction,
     ):
-        # DEFER IMMEDIATELY.
         await interaction.response.defer()
 
         view = CollectionView(
@@ -1290,16 +1328,6 @@ class Collection(
             text="Select a collection to open it."
         )
 
-        # Search button is deliberately separate
-        # so Open Collection stays easy to use.
-        search_button = SearchButton(
-            view
-        )
-
-        view.add_item(
-            search_button
-        )
-
         await interaction.followup.send(
             embeds=[
                 discord.Embed(
@@ -1344,7 +1372,6 @@ class SearchButton(
         self,
         interaction: discord.Interaction,
     ):
-        # Modal opens instantly.
         await interaction.response.send_modal(
             CollectionSearchModal(
                 self.parent_view
@@ -1359,4 +1386,4 @@ class SearchButton(
 async def setup(bot):
     await bot.add_cog(
         Collection(bot)
-        )
+    )
