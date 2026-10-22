@@ -1,4 +1,3 @@
-
 """Magic Cabinet Bag."""
 
 import discord
