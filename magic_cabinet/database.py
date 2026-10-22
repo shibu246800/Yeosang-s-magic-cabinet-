@@ -8,7 +8,9 @@ def get_connection():
     database_url = os.getenv("DATABASE_URL")
 
     if not database_url:
-        raise RuntimeError("DATABASE_URL is missing from environment variables.")
+        raise RuntimeError(
+            "DATABASE_URL is missing from environment variables."
+        )
 
     return psycopg.connect(
         database_url,
@@ -40,8 +42,9 @@ def initialize_database():
 
         connection.execute("""
             CREATE TABLE IF NOT EXISTS player_vaults (
-                user_id BIGINT PRIMARY KEY,
-                vaults TEXT NOT NULL
+                user_id BIGINT NOT NULL,
+                vault TEXT NOT NULL,
+                PRIMARY KEY (user_id, vault)
             )
         """)
 
@@ -55,8 +58,8 @@ def initialize_database():
         connection.execute("""
             CREATE TABLE IF NOT EXISTS bag (
                 user_id BIGINT NOT NULL,
-                card_id TEXT NOT NULL,
-                quantity INTEGER NOT NULL DEFAULT 1,
+                card_id BIGINT NOT NULL,
+                quantity INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (user_id, card_id)
             )
         """)
