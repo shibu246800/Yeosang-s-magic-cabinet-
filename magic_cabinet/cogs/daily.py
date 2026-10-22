@@ -1,19 +1,22 @@
+
 """Magic Cabinet daily rewards."""
 
 import random
-import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from magic_cabinet.database import (
+    get_connection,
+    initialize_database,
+)
+
 from magic_cabinet.data.epic import CARDS as EPIC_CARDS
 from magic_cabinet.data.normal import CARDS as NORMAL_CARDS
 from magic_cabinet.data.rare import CARDS as RARE_CARDS
 
-
-DATABASE = "cabinet.db"
 
 EMBED_COLOR = discord.Color.from_str("#4E0017")
 
@@ -51,12 +54,18 @@ BOOSTERS = [
     {
         "id": "starbox",
         "name": "Starbox",
-        "description": "Choose a Card ID and receive 3 copies for a small Glimmer fee.",
+        "description": (
+            "Choose a Card ID and receive 3 copies "
+            "for a small Glimmer fee."
+        ),
     },
     {
         "id": "glimmerfall",
         "name": "Glimmerfall",
-        "description": "Successful card claims give 2× normal /drop Glimmer rewards.",
+        "description": (
+            "Successful card claims give 2× normal "
+            "/drop Glimmer rewards."
+        ),
     },
     {
         "id": "dreamstep",
@@ -67,11 +76,13 @@ BOOSTERS = [
 
 
 def initialize_daily_database():
-    with sqlite3.connect(DATABASE) as connection:
+    initialize_database()
+
+    with get_connection() as connection:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS daily_data (
-                user_id INTEGER PRIMARY KEY,
+                user_id BIGINT PRIMARY KEY,
                 last_claim_at TEXT
             )
             """
@@ -80,8 +91,8 @@ def initialize_daily_database():
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS booster_tickets (
-                ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
+                ticket_id BIGSERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
                 booster_id TEXT NOT NULL,
                 received_at TEXT NOT NULL,
                 activated_at TEXT,
@@ -90,16 +101,14 @@ def initialize_daily_database():
             """
         )
 
-        connection.commit()
-
 
 def is_registered(user_id: int) -> bool:
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         row = connection.execute(
             """
             SELECT user_id
             FROM players
-            WHERE user_id = ?
+            WHERE user_id = %s
             """,
             (user_id,),
         ).fetchone()
@@ -108,121 +117,99 @@ def is_registered(user_id: int) -> bool:
 
 
 def get_daily_claim(user_id: int):
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         return connection.execute(
             """
             SELECT last_claim_at
             FROM daily_data
-            WHERE user_id = ?
+            WHERE user_id = %s
             """,
             (user_id,),
         ).fetchone()
 
 
 def get_glimmers(user_id: int) -> int:
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         row = connection.execute(
             """
             SELECT glimmers
             FROM balances
-            WHERE user_id = ?
+            WHERE user_id = %s
             """,
             (user_id,),
         ).fetchone()
 
-    return 0 if row is None else row[0]
+    return 0 if row is None else row["glimmers"]
 
 
 def add_glimmers(user_id: int, amount: int):
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         connection.execute(
             """
             INSERT INTO balances (
                 user_id,
                 glimmers
             )
-            VALUES (?, ?)
-            ON CONFLICT(user_id)
+            VALUES (%s, %s)
+            ON CONFLICT (user_id)
             DO UPDATE SET
-                glimmers = glimmers + excluded.glimmers
+                glimmers = balances.glimmers + EXCLUDED.glimmers
             """,
             (user_id, amount),
         )
-        connection.commit()
 
 
 def get_card_quantity(user_id: int, card_id: int) -> int:
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         row = connection.execute(
             """
             SELECT quantity
             FROM bag
-            WHERE user_id = ?
-            AND card_id = ?
+            WHERE user_id = %s
+            AND card_id = %s
             """,
             (user_id, card_id),
         ).fetchone()
 
-    return 0 if row is None else row[0]
+    return 0 if row is None else row["quantity"]
 
 
 def add_card_to_bag(
     user_id: int,
     card_id: int,
 ) -> tuple[int, bool]:
-    with sqlite3.connect(DATABASE) as connection:
-        row = connection.execute(
+    with get_connection() as connection:
+        existing = connection.execute(
             """
             SELECT quantity
             FROM bag
-            WHERE user_id = ?
-            AND card_id = ?
+            WHERE user_id = %s
+            AND card_id = %s
             """,
             (user_id, card_id),
         ).fetchone()
 
-        if row is None:
-            connection.execute(
-                """
-                INSERT INTO bag (
-                    user_id,
-                    card_id,
-                    quantity
-                )
-                VALUES (?, ?, 1)
-                """,
-                (user_id, card_id),
-            )
-            connection.commit()
-            return 1, True
-
-        new_quantity = row[0] + 1
-
-        connection.execute(
+        row = connection.execute(
             """
-            UPDATE bag
-            SET quantity = ?
-            WHERE user_id = ?
-            AND card_id = ?
-            """,
-            (
-                new_quantity,
+            INSERT INTO bag (
                 user_id,
                 card_id,
-            ),
-        )
+                quantity
+            )
+            VALUES (%s, %s, 1)
+            ON CONFLICT (user_id, card_id)
+            DO UPDATE SET
+                quantity = bag.quantity + 1
+            RETURNING quantity
+            """,
+            (user_id, card_id),
+        ).fetchone()
 
-        connection.commit()
-
-        return new_quantity, False
+    return row["quantity"], existing is None
 
 
 def choose_daily_card() -> dict:
-    card_pool = (
-        NORMAL_CARDS
-        + RARE_CARDS
-        + EPIC_CARDS
-    )
+    card_pool = NORMAL_CARDS + RARE_CARDS + EPIC_CARDS
 
     if not card_pool:
         raise RuntimeError("The daily card pool is empty.")
@@ -238,17 +225,17 @@ def save_daily_claim(
     user_id: int,
     claim_time: datetime,
 ):
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         connection.execute(
             """
             INSERT INTO daily_data (
                 user_id,
                 last_claim_at
             )
-            VALUES (?, ?)
-            ON CONFLICT(user_id)
+            VALUES (%s, %s)
+            ON CONFLICT (user_id)
             DO UPDATE SET
-                last_claim_at = excluded.last_claim_at
+                last_claim_at = EXCLUDED.last_claim_at
             """,
             (
                 user_id,
@@ -256,15 +243,13 @@ def save_daily_claim(
             ),
         )
 
-        connection.commit()
-
 
 def save_booster_ticket(
     user_id: int,
     booster_id: str,
     received_at: datetime,
 ):
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         connection.execute(
             """
             INSERT INTO booster_tickets (
@@ -272,7 +257,7 @@ def save_booster_ticket(
                 booster_id,
                 received_at
             )
-            VALUES (?, ?, ?)
+            VALUES (%s, %s, %s)
             """,
             (
                 user_id,
@@ -280,8 +265,6 @@ def save_booster_ticket(
                 received_at.isoformat(),
             ),
         )
-
-        connection.commit()
 
 
 def format_remaining(seconds: int) -> str:
@@ -295,6 +278,7 @@ def format_remaining(seconds: int) -> str:
 
 
 class Daily(commands.Cog):
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         initialize_daily_database()
@@ -329,8 +313,10 @@ class Daily(commands.Cog):
         now = datetime.now(timezone.utc)
         claim = get_daily_claim(user_id)
 
-        if claim is not None and claim[0]:
-            last_claim = datetime.fromisoformat(claim[0])
+        if claim is not None and claim["last_claim_at"]:
+            last_claim = datetime.fromisoformat(
+                claim["last_claim_at"]
+            )
             next_claim = last_claim + timedelta(
                 seconds=DAILY_COOLDOWN
             )
@@ -394,15 +380,8 @@ class Daily(commands.Cog):
                 f"**{new_quantity}** copies."
             )
 
-        collection = card.get(
-            "collection_id",
-            "Unknown",
-        )
-
-        rarity = card.get(
-            "stars",
-            "★",
-        )
+        collection = card.get("collection_id", "Unknown")
+        rarity = card.get("stars", "★")
 
         reward_embed = discord.Embed(
             description=(
@@ -426,23 +405,17 @@ class Daily(commands.Cog):
             color=EMBED_COLOR,
         )
 
-        reward_embed.set_image(
-            url=card["image"]
-        )
+        reward_embed.set_image(url=card["image"])
 
         header_embed = discord.Embed(
             color=EMBED_COLOR
         )
-        header_embed.set_image(
-            url=HEADER_URL
-        )
+        header_embed.set_image(url=HEADER_URL)
 
         divider_embed = discord.Embed(
             color=EMBED_COLOR
         )
-        divider_embed.set_image(
-            url=DIVIDER_URL
-        )
+        divider_embed.set_image(url=DIVIDER_URL)
 
         await interaction.response.send_message(
             embeds=[
