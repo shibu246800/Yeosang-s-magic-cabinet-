@@ -1,10 +1,10 @@
+
 """Magic Cabinet collection command."""
 
 import asyncio
 import io
 import json
 import math
-import sqlite3
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -14,12 +14,12 @@ from discord import app_commands
 from discord.ext import commands
 from PIL import Image, ImageDraw, ImageOps
 
+from magic_cabinet.database import get_connection
+
 
 # ============================================================
 # CONFIG
 # ============================================================
-
-DATABASE = "cabinet.db"
 
 EMBED_COLOR = 0x4E0017
 
@@ -44,10 +44,8 @@ DATA_FILE = (
 )
 
 PAGE_SIZE = 9
-
 CARD_WIDTH = 832
 CARD_HEIGHT = 1247
-
 GALLERY_BG = "white"
 
 
@@ -74,7 +72,6 @@ ALL_CARDS = (
 # ============================================================
 
 _IMAGE_CACHE = {}
-
 _COLLECTION_BOARD_CACHE = {}
 
 _IMAGE_EXECUTOR = ThreadPoolExecutor(
@@ -130,28 +127,21 @@ def get_collection_cards(collection_id):
 
 
 def get_owned_card_ids(user_id):
-    connection = sqlite3.connect(DATABASE)
-
-    try:
-        cursor = connection.cursor()
-
-        cursor.execute(
+    with get_connection() as connection:
+        rows = connection.execute(
             """
             SELECT card_id
             FROM bag
-            WHERE user_id = ?
+            WHERE user_id = %s
             AND quantity > 0
             """,
             (user_id,),
-        )
+        ).fetchall()
 
-        return {
-            row[0]
-            for row in cursor.fetchall()
-        }
-
-    finally:
-        connection.close()
+    return {
+        row["card_id"]
+        for row in rows
+    }
 
 
 def get_collection_status(collection_id, owned_ids):
@@ -187,7 +177,6 @@ def status_emoji(status):
 
 def filtered_collections(vault=None, status=None, user_id=None):
     result = list(COLLECTIONS)
-
     owned_ids = set()
 
     if user_id is not None and status:
@@ -232,10 +221,7 @@ def _download_image(url):
             },
         )
 
-        with urllib.request.urlopen(
-            request,
-            timeout=8,
-        ) as response:
+        with urllib.request.urlopen(url=request.full_url, timeout=8) as response:
             data = response.read()
 
         image = Image.open(
@@ -282,12 +268,7 @@ def _build_gallery_sync(collections):
         )
 
         output = io.BytesIO()
-
-        image.save(
-            output,
-            format="PNG",
-        )
-
+        image.save(output, format="PNG")
         output.seek(0)
 
         return output.getvalue()
@@ -296,10 +277,8 @@ def _build_gallery_sync(collections):
 
     if count == 1:
         columns = 1
-
     elif count <= 4:
         columns = 2
-
     else:
         columns = 3
 
@@ -307,7 +286,6 @@ def _build_gallery_sync(collections):
 
     cell_width = 850
     cell_height = 650
-
     padding = 45
     gap = 30
 
@@ -330,60 +308,26 @@ def _build_gallery_sync(collections):
     )
 
     for index, collection in enumerate(collections):
-
-        cover = _download_image(
-            collection.get("cover")
-        )
+        cover = _download_image(collection.get("cover"))
 
         if cover is None:
             continue
 
         cover.thumbnail(
-            (
-                cell_width - 20,
-                cell_height - 20,
-            ),
+            (cell_width - 20, cell_height - 20),
             Image.Resampling.LANCZOS,
         )
 
-        x = (
-            padding
-            + (index % columns)
-            * (cell_width + gap)
-        )
+        x = padding + (index % columns) * (cell_width + gap)
+        y = padding + (index // columns) * (cell_height + gap)
 
-        y = (
-            padding
-            + (index // columns)
-            * (cell_height + gap)
-        )
+        paste_x = x + (cell_width - cover.width) // 2
+        paste_y = y + (cell_height - cover.height) // 2
 
-        paste_x = (
-            x
-            + (cell_width - cover.width) // 2
-        )
-
-        paste_y = (
-            y
-            + (cell_height - cover.height) // 2
-        )
-
-        canvas.paste(
-            cover,
-            (
-                paste_x,
-                paste_y,
-            ),
-        )
+        canvas.paste(cover, (paste_x, paste_y))
 
     output = io.BytesIO()
-
-    canvas.save(
-        output,
-        format="PNG",
-        optimize=True,
-    )
-
+    canvas.save(output, format="PNG", optimize=True)
     output.seek(0)
 
     return output.getvalue()
@@ -413,103 +357,58 @@ async def build_gallery(collections):
 # COLLECTION BOARD
 # ============================================================
 
-def _build_collection_board_sync(
-    collection,
-    owned_ids,
-):
-    cards = get_collection_cards(
-        collection.get("id")
-    )
+def _build_collection_board_sync(collection, owned_ids):
+    cards = get_collection_cards(collection.get("id"))
 
     canvas_width = CARD_WIDTH * 3 + 80
     canvas_height = CARD_HEIGHT * 3 + 160
 
     canvas = Image.new(
         "RGB",
-        (
-            canvas_width,
-            canvas_height,
-        ),
+        (canvas_width, canvas_height),
         "white",
     )
 
     draw = ImageDraw.Draw(canvas)
 
     for index in range(6):
-
-        x = (
-            20
-            + (index % 3)
-            * (CARD_WIDTH + 20)
-        )
-
-        y = (
-            20
-            + (index // 3)
-            * (CARD_HEIGHT + 20)
-        )
+        x = 20 + (index % 3) * (CARD_WIDTH + 20)
+        y = 20 + (index // 3) * (CARD_HEIGHT + 20)
 
         if index < len(cards):
-
             card = cards[index]
-
             card_id = card.get("id")
 
-            image = _download_image(
-                card.get("image")
-            )
+            image = _download_image(card.get("image"))
 
             if image is None:
                 image = Image.new(
                     "RGB",
-                    (
-                        CARD_WIDTH,
-                        CARD_HEIGHT,
-                    ),
+                    (CARD_WIDTH, CARD_HEIGHT),
                     "#DDDDDD",
                 )
 
             image = ImageOps.fit(
                 image,
-                (
-                    CARD_WIDTH,
-                    CARD_HEIGHT,
-                ),
+                (CARD_WIDTH, CARD_HEIGHT),
                 method=Image.Resampling.LANCZOS,
             )
 
             if card_id not in owned_ids:
-                image = ImageOps.grayscale(
-                    image
-                ).convert("RGB")
+                image = ImageOps.grayscale(image).convert("RGB")
 
-            canvas.paste(
-                image,
-                (x, y),
-            )
+            canvas.paste(image, (x, y))
 
         else:
             draw.rectangle(
-                (
-                    x,
-                    y,
-                    x + CARD_WIDTH,
-                    y + CARD_HEIGHT,
-                ),
+                (x, y, x + CARD_WIDTH, y + CARD_HEIGHT),
                 fill="#EEEEEE",
                 outline="#AAAAAA",
                 width=4,
             )
 
-    # Legendary slot
-    legendary_x = (
-        (canvas_width - CARD_WIDTH) // 2
-    )
-
-    legendary_y = (
-        20
-        + 2 * (CARD_HEIGHT + 20)
-    )
+    legendary_x = (canvas_width - CARD_WIDTH) // 2
+    legendary_y = 20 + 2 * (CARD_HEIGHT + 20)
 
     draw.rectangle(
         (
@@ -533,49 +432,31 @@ def _build_collection_board_sync(
         anchor="mm",
     )
 
-    # Bottom label
     label = (
         f"{collection.get('id')}  •  "
         f"{collection.get('name', 'Unknown Collection')}"
     )
 
     draw.rectangle(
-        (
-            0,
-            canvas_height - 80,
-            canvas_width,
-            canvas_height,
-        ),
+        (0, canvas_height - 80, canvas_width, canvas_height),
         fill="white",
     )
 
     draw.text(
-        (
-            canvas_width // 2,
-            canvas_height - 40,
-        ),
+        (canvas_width // 2, canvas_height - 40),
         label,
         fill="#4E0017",
         anchor="mm",
     )
 
     output = io.BytesIO()
-
-    canvas.save(
-        output,
-        format="PNG",
-        optimize=True,
-    )
-
+    canvas.save(output, format="PNG", optimize=True)
     output.seek(0)
 
     return output.getvalue()
 
 
-async def build_collection_board(
-    collection,
-    owned_ids,
-):
+async def build_collection_board(collection, owned_ids):
     collection_id = collection.get("id")
 
     cache_key = (
@@ -583,9 +464,7 @@ async def build_collection_board(
         tuple(sorted(owned_ids)),
     )
 
-    cached = _COLLECTION_BOARD_CACHE.get(
-        cache_key
-    )
+    cached = _COLLECTION_BOARD_CACHE.get(cache_key)
 
     if cached is not None:
         return cached
@@ -594,9 +473,7 @@ async def build_collection_board(
 
     urls = [
         card.get("image")
-        for card in get_collection_cards(
-            collection_id
-        )
+        for card in get_collection_cards(collection_id)
         if card.get("image")
     ]
 
@@ -622,31 +499,17 @@ async def build_collection_board(
 
 class CollectionView(discord.ui.View):
 
-    def __init__(
-        self,
-        bot,
-        user_id,
-        page=0,
-        vault=None,
-        status=None,
-    ):
-        super().__init__(
-            timeout=None
-        )
+    def __init__(self, bot, user_id, page=0, vault=None, status=None):
+        super().__init__(timeout=None)
 
         self.bot = bot
         self.user_id = user_id
         self.page = page
         self.vault = vault
         self.status = status
-
         self.current_collections = []
 
         self.refresh_components()
-
-    # --------------------------------------------------------
-    # FILTERED DATA
-    # --------------------------------------------------------
 
     def get_filtered(self):
         return filtered_collections(
@@ -655,65 +518,29 @@ class CollectionView(discord.ui.View):
             user_id=self.user_id,
         )
 
-    # --------------------------------------------------------
-    # PAGE COUNT
-    # --------------------------------------------------------
-
     def page_count(self):
         total = len(self.get_filtered())
-
-        return max(
-            1,
-            math.ceil(
-                total / PAGE_SIZE
-            ),
-        )
-
-    # --------------------------------------------------------
-    # PAGE DATA
-    # --------------------------------------------------------
+        return max(1, math.ceil(total / PAGE_SIZE))
 
     def get_page_collections(self):
         collections = self.get_filtered()
-
         total_pages = self.page_count()
 
-        self.page = max(
-            0,
-            min(
-                self.page,
-                total_pages - 1,
-            ),
-        )
+        self.page = max(0, min(self.page, total_pages - 1))
 
         start = self.page * PAGE_SIZE
-
-        return collections[
-            start:start + PAGE_SIZE
-        ]
-
-    # --------------------------------------------------------
-    # COMPONENTS
-    # --------------------------------------------------------
+        return collections[start:start + PAGE_SIZE]
 
     def refresh_components(self):
         self.clear_items()
 
-        page_collections = (
-            self.get_page_collections()
-        )
+        page_collections = self.get_page_collections()
+        self.current_collections = page_collections
 
-        self.current_collections = (
-            page_collections
-        )
-
-        # Open collection select
         if page_collections:
-
             options = []
 
             for collection in page_collections:
-
                 options.append(
                     discord.SelectOption(
                         label=(
@@ -728,131 +555,67 @@ class CollectionView(discord.ui.View):
                     )
                 )
 
-            select = CollectionSelect(
-                self,
-                options,
-            )
+            self.add_item(CollectionSelect(self, options))
 
-            self.add_item(select)
-
-        # Vault buttons
         for vault_code, label in (
             ("BB", "🌙 BB"),
             ("GG", "🌹 GG"),
             ("BG", "🪡 BG"),
         ):
-
-            button = VaultButton(
-                self,
-                vault_code,
-                label,
-            )
+            button = VaultButton(self, vault_code, label)
 
             if self.vault == vault_code:
                 button.style = discord.ButtonStyle.danger
 
             self.add_item(button)
 
-        # Status
-        status_select = StatusSelect(
-            self,
-            self.status,
-        )
+        self.add_item(StatusSelect(self, self.status))
 
-        self.add_item(status_select)
-
-        # Previous
         previous = PreviousButton(self)
-
-        previous.disabled = (
-            self.page <= 0
-        )
-
+        previous.disabled = self.page <= 0
         self.add_item(previous)
 
-        # Next
         next_button = NextButton(self)
-
-        next_button.disabled = (
-            self.page >= self.page_count() - 1
-        )
-
+        next_button.disabled = self.page >= self.page_count() - 1
         self.add_item(next_button)
 
-        # Search
-        self.add_item(
-            SearchButton(self)
-        )
+        self.add_item(SearchButton(self))
 
-    # --------------------------------------------------------
-    # REFRESH
-    # --------------------------------------------------------
-
-    async def refresh_message(
-        self,
-        interaction,
-    ):
+    async def refresh_message(self, interaction):
         self.refresh_components()
+        page_collections = self.current_collections
 
-        page_collections = (
-            self.current_collections
-        )
-
-        image_bytes = await build_gallery(
-            page_collections
-        )
+        image_bytes = await build_gallery(page_collections)
 
         file = discord.File(
             io.BytesIO(image_bytes),
             filename="collection_gallery.png",
         )
 
-        total = len(
-            self.get_filtered()
-        )
+        total = len(self.get_filtered())
 
         if total:
-            start = (
-                self.page * PAGE_SIZE + 1
-            )
-
-            end = min(
-                (self.page + 1) * PAGE_SIZE,
-                total,
-            )
-
-            range_text = (
-                f"Collections **{start}–{end}**"
-            )
-
+            start = self.page * PAGE_SIZE + 1
+            end = min((self.page + 1) * PAGE_SIZE, total)
+            range_text = f"Collections **{start}–{end}**"
         else:
             range_text = "No collections found."
 
         embed = discord.Embed(
             title="The Collection",
             description=(
-                f"Page **{self.page + 1} / "
-                f"{self.page_count()}**\n"
+                f"Page **{self.page + 1} / {self.page_count()}**\n"
                 f"{range_text}"
             ),
             color=EMBED_COLOR,
         )
 
-        embed.set_image(
-            url="attachment://collection_gallery.png"
-        )
-
-        embed.set_footer(
-            text="Select a collection to open it."
-        )
+        embed.set_image(url="attachment://collection_gallery.png")
+        embed.set_footer(text="Select a collection to open it.")
 
         await interaction.edit_original_response(
-            embeds=[
-                embed,
-            ],
-            attachments=[
-                file,
-            ],
+            embeds=[embed],
+            attachments=[file],
             view=self,
         )
 
@@ -861,15 +624,9 @@ class CollectionView(discord.ui.View):
 # OPEN COLLECTION SELECT
 # ============================================================
 
-class CollectionSelect(
-    discord.ui.Select
-):
+class CollectionSelect(discord.ui.Select):
 
-    def __init__(
-        self,
-        parent_view,
-        options,
-    ):
+    def __init__(self, parent_view, options):
         self.parent_view = parent_view
 
         super().__init__(
@@ -880,27 +637,17 @@ class CollectionSelect(
             row=0,
         )
 
-    async def callback(
-        self,
-        interaction: discord.Interaction,
-    ):
-        await interaction.response.defer(
-            ephemeral=True
-        )
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
 
         collection_id = self.values[0]
-
-        collection = get_collection(
-            collection_id
-        )
+        collection = get_collection(collection_id)
 
         if collection is None:
-
             await interaction.followup.send(
                 "Collection not found.",
                 ephemeral=True,
             )
-
             return
 
         owned_ids = await asyncio.to_thread(
@@ -908,10 +655,7 @@ class CollectionSelect(
             interaction.user.id,
         )
 
-        image_bytes = await build_collection_board(
-            collection,
-            owned_ids,
-        )
+        image_bytes = await build_collection_board(collection, owned_ids)
 
         file = discord.File(
             io.BytesIO(image_bytes),
@@ -925,31 +669,20 @@ class CollectionSelect(
         )
 
         embed = discord.Embed(
-            title=collection.get(
-                "name",
-                "Collection",
-            ),
+            title=collection.get("name", "Collection"),
             description=(
                 f"**{collection.get('id')}**\n"
                 f"{collection.get('series', '')}\n\n"
-                f"{status_emoji(status)} "
-                f"**{status}** • "
-                f"**{count}/6**"
+                f"{status_emoji(status)} **{status}** • **{count}/6**"
             ),
             color=EMBED_COLOR,
         )
 
-        embed.set_image(
-            url="attachment://collection.png"
-        )
+        embed.set_image(url="attachment://collection.png")
 
         await interaction.followup.send(
-            embeds=[
-                embed,
-            ],
-            files=[
-                file,
-            ],
+            embeds=[embed],
+            files=[file],
             ephemeral=True,
         )
 
@@ -958,16 +691,9 @@ class CollectionSelect(
 # VAULT BUTTON
 # ============================================================
 
-class VaultButton(
-    discord.ui.Button
-):
+class VaultButton(discord.ui.Button):
 
-    def __init__(
-        self,
-        parent_view,
-        vault_code,
-        label,
-    ):
+    def __init__(self, parent_view, vault_code, label):
         self.parent_view = parent_view
         self.vault_code = vault_code
 
@@ -977,40 +703,26 @@ class VaultButton(
             row=1,
         )
 
-    async def callback(
-        self,
-        interaction: discord.Interaction,
-    ):
+    async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
 
         if self.parent_view.vault == self.vault_code:
             self.parent_view.vault = None
-
         else:
-            self.parent_view.vault = (
-                self.vault_code
-            )
+            self.parent_view.vault = self.vault_code
 
         self.parent_view.page = 0
 
-        await self.parent_view.refresh_message(
-            interaction
-        )
+        await self.parent_view.refresh_message(interaction)
 
 
 # ============================================================
 # STATUS SELECT
 # ============================================================
 
-class StatusSelect(
-    discord.ui.Select
-):
+class StatusSelect(discord.ui.Select):
 
-    def __init__(
-        self,
-        parent_view,
-        current_status,
-    ):
+    def __init__(self, parent_view, current_status):
         self.parent_view = parent_view
 
         options = [
@@ -1042,39 +754,23 @@ class StatusSelect(
             row=2,
         )
 
-    async def callback(
-        self,
-        interaction: discord.Interaction,
-    ):
+    async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
 
         value = self.values[0]
-
-        if value == "ALL":
-            self.parent_view.status = None
-
-        else:
-            self.parent_view.status = value
-
+        self.parent_view.status = None if value == "ALL" else value
         self.parent_view.page = 0
 
-        await self.parent_view.refresh_message(
-            interaction
-        )
+        await self.parent_view.refresh_message(interaction)
 
 
 # ============================================================
 # PREVIOUS
 # ============================================================
 
-class PreviousButton(
-    discord.ui.Button
-):
+class PreviousButton(discord.ui.Button):
 
-    def __init__(
-        self,
-        parent_view,
-    ):
+    def __init__(self, parent_view):
         self.parent_view = parent_view
 
         super().__init__(
@@ -1083,34 +779,23 @@ class PreviousButton(
             row=3,
         )
 
-    async def callback(
-        self,
-        interaction: discord.Interaction,
-    ):
+    async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
 
         if self.parent_view.page <= 0:
             return
 
         self.parent_view.page -= 1
-
-        await self.parent_view.refresh_message(
-            interaction
-        )
+        await self.parent_view.refresh_message(interaction)
 
 
 # ============================================================
 # NEXT
 # ============================================================
 
-class NextButton(
-    discord.ui.Button
-):
+class NextButton(discord.ui.Button):
 
-    def __init__(
-        self,
-        parent_view,
-    ):
+    def __init__(self, parent_view):
         self.parent_view = parent_view
 
         super().__init__(
@@ -1119,33 +804,21 @@ class NextButton(
             row=3,
         )
 
-    async def callback(
-        self,
-        interaction: discord.Interaction,
-    ):
+    async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
 
-        if (
-            self.parent_view.page
-            >= self.parent_view.page_count() - 1
-        ):
+        if self.parent_view.page >= self.parent_view.page_count() - 1:
             return
 
         self.parent_view.page += 1
-
-        await self.parent_view.refresh_message(
-            interaction
-        )
+        await self.parent_view.refresh_message(interaction)
 
 
 # ============================================================
 # SEARCH MODAL
 # ============================================================
 
-class CollectionSearchModal(
-    discord.ui.Modal,
-    title="Search Collection",
-):
+class CollectionSearchModal(discord.ui.Modal, title="Search Collection"):
 
     collection_id = discord.ui.TextInput(
         label="Collection ID",
@@ -1154,39 +827,21 @@ class CollectionSearchModal(
         max_length=30,
     )
 
-    def __init__(
-        self,
-        parent_view,
-    ):
+    def __init__(self, parent_view):
         super().__init__()
-
         self.parent_view = parent_view
 
-    async def on_submit(
-        self,
-        interaction: discord.Interaction,
-    ):
-        await interaction.response.defer(
-            ephemeral=True
-        )
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
 
-        collection_id = (
-            str(self.collection_id)
-            .strip()
-            .upper()
-        )
-
-        collection = get_collection(
-            collection_id
-        )
+        collection_id = str(self.collection_id).strip().upper()
+        collection = get_collection(collection_id)
 
         if collection is None:
-
             await interaction.followup.send(
                 f"Collection **{collection_id}** was not found.",
                 ephemeral=True,
             )
-
             return
 
         owned_ids = await asyncio.to_thread(
@@ -1194,10 +849,7 @@ class CollectionSearchModal(
             interaction.user.id,
         )
 
-        image_bytes = await build_collection_board(
-            collection,
-            owned_ids,
-        )
+        image_bytes = await build_collection_board(collection, owned_ids)
 
         file = discord.File(
             io.BytesIO(image_bytes),
@@ -1211,31 +863,20 @@ class CollectionSearchModal(
         )
 
         embed = discord.Embed(
-            title=collection.get(
-                "name",
-                "Collection",
-            ),
+            title=collection.get("name", "Collection"),
             description=(
                 f"**{collection.get('id')}**\n"
                 f"{collection.get('series', '')}\n\n"
-                f"{status_emoji(status)} "
-                f"**{status}** • "
-                f"**{count}/6**"
+                f"{status_emoji(status)} **{status}** • **{count}/6**"
             ),
             color=EMBED_COLOR,
         )
 
-        embed.set_image(
-            url="attachment://collection.png"
-        )
+        embed.set_image(url="attachment://collection.png")
 
         await interaction.followup.send(
-            embeds=[
-                embed,
-            ],
-            files=[
-                file,
-            ],
+            embeds=[embed],
+            files=[file],
             ephemeral=True,
         )
 
@@ -1244,70 +885,36 @@ class CollectionSearchModal(
 # COLLECTION COG
 # ============================================================
 
-class Collection(
-    commands.Cog
-):
+class Collection(commands.Cog):
 
-    def __init__(
-        self,
-        bot,
-    ):
+    def __init__(self, bot):
         self.bot = bot
         self.active_views = []
-
-    # --------------------------------------------------------
-    # /collection
-    # --------------------------------------------------------
 
     @app_commands.command(
         name="collection",
         description="Browse the Magic Cabinet collections.",
     )
-    async def collection(
-        self,
-        interaction: discord.Interaction,
-    ):
+    async def collection(self, interaction: discord.Interaction):
         await interaction.response.defer()
 
-        view = CollectionView(
-            self.bot,
-            interaction.user.id,
-        )
-
-        # Keep the View alive while the bot is running.
+        view = CollectionView(self.bot, interaction.user.id)
         self.active_views.append(view)
 
-        page_collections = (
-            view.get_page_collections()
-        )
-
-        image_bytes = await build_gallery(
-            page_collections
-        )
+        page_collections = view.get_page_collections()
+        image_bytes = await build_gallery(page_collections)
 
         file = discord.File(
             io.BytesIO(image_bytes),
             filename="collection_gallery.png",
         )
 
-        total = len(
-            view.get_filtered()
-        )
+        total = len(view.get_filtered())
 
         if total:
-            start = (
-                view.page * PAGE_SIZE + 1
-            )
-
-            end = min(
-                (view.page + 1) * PAGE_SIZE,
-                total,
-            )
-
-            range_text = (
-                f"Collections **{start}–{end}**"
-            )
-
+            start = view.page * PAGE_SIZE + 1
+            end = min((view.page + 1) * PAGE_SIZE, total)
+            range_text = f"Collections **{start}–{end}**"
         else:
             range_text = "No collections found."
 
@@ -1320,27 +927,18 @@ class Collection(
             color=EMBED_COLOR,
         )
 
-        embed.set_image(
-            url="attachment://collection_gallery.png"
-        )
-
-        embed.set_footer(
-            text="Select a collection to open it."
-        )
+        embed.set_image(url="attachment://collection_gallery.png")
+        embed.set_footer(text="Select a collection to open it.")
 
         await interaction.followup.send(
             embeds=[
                 discord.Embed(
                     color=EMBED_COLOR,
-                ).set_image(
-                    url=HEADER_URL
-                ),
+                ).set_image(url=HEADER_URL),
                 embed,
                 discord.Embed(
                     color=EMBED_COLOR,
-                ).set_image(
-                    url=DIVIDER_URL
-                ),
+                ).set_image(url=DIVIDER_URL),
             ],
             file=file,
             view=view,
@@ -1351,14 +949,9 @@ class Collection(
 # SEARCH BUTTON
 # ============================================================
 
-class SearchButton(
-    discord.ui.Button
-):
+class SearchButton(discord.ui.Button):
 
-    def __init__(
-        self,
-        parent_view,
-    ):
+    def __init__(self, parent_view):
         self.parent_view = parent_view
 
         super().__init__(
@@ -1368,14 +961,9 @@ class SearchButton(
             row=3,
         )
 
-    async def callback(
-        self,
-        interaction: discord.Interaction,
-    ):
+    async def callback(self, interaction: discord.Interaction):
         await interaction.response.send_modal(
-            CollectionSearchModal(
-                self.parent_view
-            )
+            CollectionSearchModal(self.parent_view)
         )
 
 
@@ -1384,6 +972,4 @@ class SearchButton(
 # ============================================================
 
 async def setup(bot):
-    await bot.add_cog(
-        Collection(bot)
-    )
+    await bot.add_cog(Collection(bot))
