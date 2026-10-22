@@ -39,6 +39,13 @@ class Cabinet(commands.GroupCog, name="cabinet"):
         drop_channel4: discord.TextChannel | None = None,
         drop_channel5: discord.TextChannel | None = None,
     ):
+        if interaction.guild_id is None:
+            await interaction.response.send_message(
+                "This command can only be used inside a server.",
+                ephemeral=True,
+            )
+            return
+
         channels = [
             drop_channel1,
             drop_channel2,
@@ -96,9 +103,9 @@ class Cabinet(commands.GroupCog, name="cabinet"):
                 "🗝️ **Drop channels saved!**\n\n"
                 "➷ `/drop` can now be used only in:\n"
                 f"{channel_list}\n\n"
-                "-# ❃ Other Magic Cabinet commands are not restricted "
-                "by this setup.✒\n"
-                "✦ Players can now begin with `/magic awaken`"
+                "❃ Players must use `/magic awaken` next.\n"
+                "✦ Other player commands remain locked until "
+                "their vault has been saved."
             ),
             color=EMBED_COLOR,
         )
