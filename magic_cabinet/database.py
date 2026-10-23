@@ -1,5 +1,6 @@
 
 import os
+
 import psycopg
 from psycopg.rows import dict_row
 
@@ -61,5 +62,23 @@ def initialize_database():
                 card_id BIGINT NOT NULL,
                 quantity INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (user_id, card_id)
+            )
+        """)
+
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS daily_data (
+                user_id BIGINT PRIMARY KEY,
+                last_claim_at TEXT
+            )
+        """)
+
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS booster_tickets (
+                ticket_id BIGSERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                booster_id TEXT NOT NULL,
+                received_at TEXT NOT NULL,
+                activated_at TEXT,
+                expires_at TEXT
             )
         """)
