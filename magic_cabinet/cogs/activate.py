@@ -1,14 +1,22 @@
 """Magic Cabinet booster activation."""
+
 import sqlite3
 from datetime import datetime, timedelta, timezone
+
 import discord
 from discord import app_commands
 from discord.ext import commands
+
+
 DATABASE = "cabinet.db"
+
 EMBED_COLOR = discord.Color.from_str("#4E0017")
+
 BOOSTER_EMOTE = "<a:heartpotion:1556018680972714095>"
 GLIMMER_EMOTE = "<:glimmer:1554842064464773172>"
+
 BOOSTER_DURATION = timedelta(hours=24)
+
 BOOSTERS = {
     "sunflare": {
         "name": "Sunflare",
@@ -27,7 +35,9 @@ BOOSTERS = {
     },
     "glimmerfall": {
         "name": "Glimmerfall",
-        "description": "Successful card claims give 2× normal /drop Glimmer rewards.",
+        "description": (
+            "Successful card claims give 2× normal /drop Glimmer rewards."
+        ),
         "uses": None,
     },
     "dreamstep": {
@@ -36,7 +46,11 @@ BOOSTERS = {
         "uses": 1,
     },
 }
+
+
 def initialize_activate_database():
+    """Create or update the SQLite booster ticket table."""
+
     with sqlite3.connect(DATABASE) as connection:
         connection.execute(
             """
@@ -51,13 +65,14 @@ def initialize_activate_database():
             )
             """
         )
-        connection.commit()
-        columns = [
+
+        columns = {
             row[1]
             for row in connection.execute(
                 "PRAGMA table_info(booster_tickets)"
             ).fetchall()
-        ]
+        }
+
         if "uses_remaining" not in columns:
             connection.execute(
                 """
@@ -65,8 +80,11 @@ def initialize_activate_database():
                 ADD COLUMN uses_remaining INTEGER
                 """
             )
-        connection.commit()
+
+
 def is_registered(user_id: int) -> bool:
+    """Check whether the player has awakened their Cabinet."""
+
     with sqlite3.connect(DATABASE) as connection:
         row = connection.execute(
             """
@@ -76,8 +94,13 @@ def is_registered(user_id: int) -> bool:
             """,
             (user_id,),
         ).fetchone()
+
     return row is not None
+
+
 def get_available_tickets(user_id: int):
+    """Return the player's unused booster tickets."""
+
     with sqlite3.connect(DATABASE) as connection:
         return connection.execute(
             """
@@ -89,8 +112,13 @@ def get_available_tickets(user_id: int):
             """,
             (user_id,),
         ).fetchall()
+
+
 def get_active_boosters(user_id: int):
+    """Return the player's currently active boosters."""
+
     now = datetime.now(timezone.utc).isoformat()
+
     with sqlite3.connect(DATABASE) as connection:
         return connection.execute(
             """
@@ -101,19 +129,21 @@ def get_active_boosters(user_id: int):
             AND expires_at > ?
             ORDER BY activated_at ASC
             """,
-            (
-                user_id,
-                now,
-            ),
+            (user_id, now),
         ).fetchall()
+
+
 def activate_ticket(
     ticket_id: int,
     user_id: int,
     booster_id: str,
     uses_remaining: int | None,
 ):
+    """Activate a booster ticket for 24 hours."""
+
     now = datetime.now(timezone.utc)
     expires_at = now + BOOSTER_DURATION
+
     with sqlite3.connect(DATABASE) as connection:
         cursor = connection.execute(
             """
@@ -135,14 +165,20 @@ def activate_ticket(
                 booster_id,
             ),
         )
-        connection.commit()
+
         if cursor.rowcount != 1:
             return None
+
     return expires_at
+
+
 class Activate(commands.GroupCog, name="activate"):
+    """Booster activation commands."""
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         initialize_activate_database()
+
     @app_commands.command(
         name="boost",
         description="Activate one of your Booster Tickets.",
@@ -151,7 +187,10 @@ class Activate(commands.GroupCog, name="activate"):
         self,
         interaction: discord.Interaction,
     ):
+        """Activate the player's next available booster ticket."""
+
         user_id = interaction.user.id
+
         if not is_registered(user_id):
             embed = discord.Embed(
                 description=(
@@ -162,33 +201,48 @@ class Activate(commands.GroupCog, name="activate"):
                 ),
                 color=EMBED_COLOR,
             )
+
             await interaction.response.send_message(
                 embed=embed,
                 ephemeral=True,
             )
             return
+
         active_boosters = get_active_boosters(user_id)
+
         if active_boosters:
             lines = []
+
             for _, booster_id, expires_at, uses_remaining in active_boosters:
                 booster = BOOSTERS.get(booster_id)
+
                 if booster is None:
                     continue
+
                 expiry = datetime.fromisoformat(expires_at)
                 remaining = expiry - datetime.now(timezone.utc)
-                hours = max(0, int(remaining.total_seconds()) // 3600)
+
+                hours = max(
+                    0,
+                    int(remaining.total_seconds()) // 3600,
+                )
                 minutes = max(
                     0,
                     (int(remaining.total_seconds()) % 3600) // 60,
                 )
-                if uses_remaining is None:
-                    usage = "∞"
-                else:
-                    usage = str(uses_remaining)
+
+                usage = (
+                    "∞"
+                    if uses_remaining is None
+                    else str(uses_remaining)
+                )
+
                 lines.append(
                     f"{BOOSTER_EMOTE} **{booster['name']}**\n"
-                    f"-# ✦ {hours}h {minutes}m remaining • Uses: **{usage}**"
+                    f"-# ✦ {hours}h {minutes}m remaining • "
+                    f"Uses: **{usage}**"
                 )
+
             if lines:
                 embed = discord.Embed(
                     description=(
@@ -200,12 +254,15 @@ class Activate(commands.GroupCog, name="activate"):
                     ),
                     color=EMBED_COLOR,
                 )
+
                 await interaction.response.send_message(
                     embed=embed,
                     ephemeral=True,
                 )
                 return
+
         tickets = get_available_tickets(user_id)
+
         if not tickets:
             embed = discord.Embed(
                 description=(
@@ -218,13 +275,16 @@ class Activate(commands.GroupCog, name="activate"):
                 ),
                 color=EMBED_COLOR,
             )
+
             await interaction.response.send_message(
                 embed=embed,
                 ephemeral=True,
             )
             return
+
         ticket_id, booster_id, _ = tickets[0]
         booster = BOOSTERS.get(booster_id)
+
         if booster is None:
             embed = discord.Embed(
                 description=(
@@ -235,17 +295,20 @@ class Activate(commands.GroupCog, name="activate"):
                 ),
                 color=EMBED_COLOR,
             )
+
             await interaction.response.send_message(
                 embed=embed,
                 ephemeral=True,
             )
             return
+
         expires_at = activate_ticket(
             ticket_id=ticket_id,
             user_id=user_id,
             booster_id=booster_id,
             uses_remaining=booster["uses"],
         )
+
         if expires_at is None:
             embed = discord.Embed(
                 description=(
@@ -256,11 +319,13 @@ class Activate(commands.GroupCog, name="activate"):
                 ),
                 color=EMBED_COLOR,
             )
+
             await interaction.response.send_message(
                 embed=embed,
                 ephemeral=True,
             )
             return
+
         if booster["uses"] is None:
             usage_text = "Unlimited uses during the 24-hour activation."
         else:
@@ -268,6 +333,7 @@ class Activate(commands.GroupCog, name="activate"):
                 f"**{booster['uses']}** use"
                 f"{'s' if booster['uses'] != 1 else ''} available."
             )
+
         embed = discord.Embed(
             description=(
                 "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
@@ -282,10 +348,9 @@ class Activate(commands.GroupCog, name="activate"):
             ),
             color=EMBED_COLOR,
         )
-        await interaction.response.send_message(
-            embed=embed
-        )
+
+        await interaction.response.send_message(embed=embed)
+
+
 async def setup(bot: commands.Bot):
-    await bot.add_cog(
-        Activate(bot)
-     )
+    await bot.add_cog(Activate(bot))
