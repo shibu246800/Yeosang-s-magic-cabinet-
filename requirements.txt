@@ -4,4 +4,3 @@ Flask
 aiohttp
 Pillow
 requests
-psycopg[binary]
