@@ -1,16 +1,18 @@
+
 """Magic Cabinet earn command."""
 
-import sqlite3
 from datetime import datetime, timezone
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from magic_cabinet.database import (
+    get_connection,
+    initialize_database,
+)
 from magic_cabinet.weekly_tracker import record_weekly_progress
 
-
-DATABASE = "cabinet.db"
 
 EMBED_COLOR = discord.Color.from_str("#4E0017")
 GLIMMER_EMOTE = "<:glimmer:1554842064464773172>"
@@ -21,27 +23,28 @@ EARNING_INCREASE = 10
 
 
 def initialize_earn_database():
-    with sqlite3.connect(DATABASE) as connection:
+    initialize_database()
+
+    with get_connection() as connection:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS earn_data (
-                user_id INTEGER PRIMARY KEY,
+                user_id BIGINT PRIMARY KEY,
                 last_earn_at TEXT,
                 daily_earnings INTEGER NOT NULL DEFAULT 100,
                 reset_date TEXT
             )
             """
         )
-        connection.commit()
 
 
 def is_registered(user_id: int) -> bool:
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         row = connection.execute(
             """
             SELECT user_id
             FROM players
-            WHERE user_id = ?
+            WHERE user_id = %s
             """,
             (user_id,),
         ).fetchone()
@@ -50,42 +53,42 @@ def is_registered(user_id: int) -> bool:
 
 
 def get_balance(user_id: int) -> int:
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         row = connection.execute(
             """
             SELECT glimmers
             FROM balances
-            WHERE user_id = ?
+            WHERE user_id = %s
             """,
             (user_id,),
         ).fetchone()
 
-    return 0 if row is None else row[0]
+    return 0 if row is None else row["glimmers"]
 
 
 def add_glimmers(user_id: int, amount: int) -> int:
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         connection.execute(
             """
             INSERT INTO balances (user_id, glimmers)
-            VALUES (?, ?)
-            ON CONFLICT(user_id)
-            DO UPDATE SET glimmers = glimmers + excluded.glimmers
+            VALUES (%s, %s)
+            ON CONFLICT (user_id)
+            DO UPDATE SET
+                glimmers = balances.glimmers + EXCLUDED.glimmers
             """,
             (user_id, amount),
         )
-        connection.commit()
 
     return get_balance(user_id)
 
 
 def get_earn_data(user_id: int):
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         row = connection.execute(
             """
             SELECT last_earn_at, daily_earnings, reset_date
             FROM earn_data
-            WHERE user_id = ?
+            WHERE user_id = %s
             """,
             (user_id,),
         ).fetchone()
@@ -96,12 +99,12 @@ def get_earn_data(user_id: int):
 def reset_daily_earnings_if_needed(user_id: int):
     today = datetime.now(timezone.utc).date().isoformat()
 
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         row = connection.execute(
             """
             SELECT reset_date
             FROM earn_data
-            WHERE user_id = ?
+            WHERE user_id = %s
             """,
             (user_id,),
         ).fetchone()
@@ -114,30 +117,20 @@ def reset_daily_earnings_if_needed(user_id: int):
                     daily_earnings,
                     reset_date
                 )
-                VALUES (?, ?, ?)
+                VALUES (%s, %s, %s)
                 """,
-                (
-                    user_id,
-                    FIRST_EARNING,
-                    today,
-                ),
+                (user_id, FIRST_EARNING, today),
             )
-        elif row[0] != today:
+        elif row["reset_date"] != today:
             connection.execute(
                 """
                 UPDATE earn_data
-                SET daily_earnings = ?,
-                    reset_date = ?
-                WHERE user_id = ?
+                SET daily_earnings = %s,
+                    reset_date = %s
+                WHERE user_id = %s
                 """,
-                (
-                    FIRST_EARNING,
-                    today,
-                    user_id,
-                ),
+                (FIRST_EARNING, today, user_id),
             )
-
-        connection.commit()
 
 
 class Earn(commands.Cog):
@@ -176,22 +169,18 @@ class Earn(commands.Cog):
 
         data = get_earn_data(user_id)
 
-        last_earn_at = data[0]
-        earning_amount = data[1]
+        last_earn_at = data["last_earn_at"]
+        earning_amount = data["daily_earnings"]
 
         now = datetime.now(timezone.utc)
 
         if last_earn_at:
             last_earn = datetime.fromisoformat(last_earn_at)
 
-            elapsed = (
-                now - last_earn
-            ).total_seconds()
+            elapsed = (now - last_earn).total_seconds()
 
             if elapsed < COOLDOWN_SECONDS:
-                remaining = int(
-                    COOLDOWN_SECONDS - elapsed
-                )
+                remaining = int(COOLDOWN_SECONDS - elapsed)
 
                 hours = remaining // 3600
                 minutes = (remaining % 3600) // 60
@@ -229,21 +218,16 @@ class Earn(commands.Cog):
 
         next_amount = earning_amount + EARNING_INCREASE
 
-        with sqlite3.connect(DATABASE) as connection:
+        with get_connection() as connection:
             connection.execute(
                 """
                 UPDATE earn_data
-                SET last_earn_at = ?,
-                    daily_earnings = ?
-                WHERE user_id = ?
+                SET last_earn_at = %s,
+                    daily_earnings = %s
+                WHERE user_id = %s
                 """,
-                (
-                    now.isoformat(),
-                    next_amount,
-                    user_id,
-                ),
+                (now.isoformat(), next_amount, user_id),
             )
-            connection.commit()
 
         embed = discord.Embed(
             description=(
