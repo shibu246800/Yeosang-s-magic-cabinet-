@@ -1,4 +1,3 @@
-
 """Magic Cabinet daily rewards."""
 
 import random
@@ -90,14 +89,15 @@ def initialize_daily_database():
 
         connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS booster_tickets (
-                ticket_id BIGSERIAL PRIMARY KEY,
-                user_id BIGINT NOT NULL,
-                booster_id TEXT NOT NULL,
-                received_at TEXT NOT NULL,
-                activated_at TEXT,
-                expires_at TEXT
-            )
+            ALTER TABLE booster_tickets
+            ADD COLUMN IF NOT EXISTS uses_remaining INTEGER
+            """
+        )
+
+        connection.execute(
+            """
+            ALTER TABLE booster_tickets
+            ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'daily'
             """
         )
 
