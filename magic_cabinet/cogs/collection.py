@@ -92,9 +92,16 @@ def load_collections():
         with open(DATA_FILE, "r", encoding="utf-8") as file:
             data = json.load(file)
 
-        return data.get("collections", [])
+        if isinstance(data, list):
+            return data
 
-    except Exception:
+        if isinstance(data, dict):
+            collections = data.get("collections", [])
+            return collections if isinstance(collections, list) else []
+
+        return []
+
+    except (OSError, json.JSONDecodeError, TypeError):
         return []
 
 
@@ -106,18 +113,22 @@ COLLECTIONS = load_collections()
 # ============================================================
 
 def get_collection(collection_id):
+    collection_id = str(collection_id)
+
     for collection in COLLECTIONS:
-        if collection.get("id") == collection_id:
+        if str(collection.get("id")) == collection_id:
             return collection
 
     return None
 
 
 def get_collection_cards(collection_id):
+    collection_id = str(collection_id)
+
     cards = [
         card
         for card in ALL_CARDS
-        if card.get("collection_id") == collection_id
+        if str(card.get("collection_id")) == collection_id
     ]
 
     return sorted(
@@ -132,14 +143,14 @@ def get_owned_card_ids(user_id):
             """
             SELECT card_id
             FROM bag
-            WHERE user_id = %s
+            WHERE user_id = ?
             AND quantity > 0
             """,
             (user_id,),
         ).fetchall()
 
     return {
-        row["card_id"]
+        str(row["card_id"])
         for row in rows
     }
 
@@ -150,10 +161,12 @@ def get_collection_status(collection_id, owned_ids):
     if not cards:
         return "Unattended", 0
 
+    owned_ids = {str(card_id) for card_id in owned_ids}
+
     owned_count = sum(
         1
         for card in cards
-        if card.get("id") in owned_ids
+        if str(card.get("id")) in owned_ids
     )
 
     if owned_count == 0:
@@ -221,7 +234,7 @@ def _download_image(url):
             },
         )
 
-        with urllib.request.urlopen(url=request.full_url, timeout=8) as response:
+        with urllib.request.urlopen(request, timeout=8) as response:
             data = response.read()
 
         image = Image.open(
@@ -358,7 +371,9 @@ async def build_gallery(collections):
 # ============================================================
 
 def _build_collection_board_sync(collection, owned_ids):
-    cards = get_collection_cards(collection.get("id"))
+    collection_id = collection.get("id")
+    cards = get_collection_cards(collection_id)
+    owned_ids = {str(card_id) for card_id in owned_ids}
 
     canvas_width = CARD_WIDTH * 3 + 80
     canvas_height = CARD_HEIGHT * 3 + 160
@@ -377,7 +392,7 @@ def _build_collection_board_sync(collection, owned_ids):
 
         if index < len(cards):
             card = cards[index]
-            card_id = card.get("id")
+            card_id = str(card.get("id"))
 
             image = _download_image(card.get("image"))
 
@@ -457,7 +472,8 @@ def _build_collection_board_sync(collection, owned_ids):
 
 
 async def build_collection_board(collection, owned_ids):
-    collection_id = collection.get("id")
+    collection_id = str(collection.get("id"))
+    owned_ids = {str(card_id) for card_id in owned_ids}
 
     cache_key = (
         collection_id,
@@ -511,6 +527,16 @@ class CollectionView(discord.ui.View):
 
         self.refresh_components()
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "This collection menu belongs to another player.",
+                ephemeral=True,
+            )
+            return False
+
+        return True
+
     def get_filtered(self):
         return filtered_collections(
             vault=self.vault,
@@ -547,7 +573,7 @@ class CollectionView(discord.ui.View):
                             f"{collection.get('id')} • "
                             f"{collection.get('name', 'Collection')}"
                         )[:100],
-                        value=collection.get("id"),
+                        value=str(collection.get("id")),
                         description=(
                             f"{collection.get('series', '')} • "
                             f"{collection.get('vault', '')}"
@@ -882,6 +908,28 @@ class CollectionSearchModal(discord.ui.Modal, title="Search Collection"):
 
 
 # ============================================================
+# SEARCH BUTTON
+# ============================================================
+
+class SearchButton(discord.ui.Button):
+
+    def __init__(self, parent_view):
+        self.parent_view = parent_view
+
+        super().__init__(
+            label="Search",
+            emoji="🔎",
+            style=discord.ButtonStyle.secondary,
+            row=3,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(
+            CollectionSearchModal(self.parent_view)
+        )
+
+
+# ============================================================
 # COLLECTION COG
 # ============================================================
 
@@ -942,28 +990,6 @@ class Collection(commands.Cog):
             ],
             file=file,
             view=view,
-        )
-
-
-# ============================================================
-# SEARCH BUTTON
-# ============================================================
-
-class SearchButton(discord.ui.Button):
-
-    def __init__(self, parent_view):
-        self.parent_view = parent_view
-
-        super().__init__(
-            label="Search",
-            emoji="🔎",
-            style=discord.ButtonStyle.secondary,
-            row=3,
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(
-            CollectionSearchModal(self.parent_view)
         )
 
 
