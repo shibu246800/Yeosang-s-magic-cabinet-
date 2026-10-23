@@ -2,12 +2,16 @@
 
 import json
 import random
-import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
+
+from magic_cabinet.database import (
+    get_connection,
+    initialize_database,
+)
 
 from magic_cabinet.weekly_tracker import (
     get_pending_notifications,
@@ -15,8 +19,6 @@ from magic_cabinet.weekly_tracker import (
     save_weekly_channel,
 )
 
-
-DATABASE = "cabinet.db"
 
 EMBED_COLOR = discord.Color.from_str("#4E0017")
 
@@ -95,7 +97,6 @@ EASY_TASKS = [
     },
 ]
 
-
 MEDIUM_TASKS = [
     {
         "id": "collect_new_cards",
@@ -125,7 +126,6 @@ MEDIUM_TASKS = [
         "reward_max": 12000,
     },
 ]
-
 
 HARD_TASKS = [
     {
@@ -163,11 +163,13 @@ HARD_TASKS = [
 # ---------------------------------------------------------
 
 def initialize_weekly_database():
-    with sqlite3.connect(DATABASE) as connection:
+    initialize_database()
+
+    with get_connection() as connection:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS weekly_challenges (
-                user_id INTEGER PRIMARY KEY,
+                user_id BIGINT PRIMARY KEY,
                 week_started TEXT NOT NULL,
                 task_data TEXT NOT NULL,
                 guaranteed_claimed INTEGER NOT NULL DEFAULT 0,
@@ -179,16 +181,14 @@ def initialize_weekly_database():
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS weekly_progress (
-                user_id INTEGER NOT NULL,
+                user_id BIGINT NOT NULL,
                 task_id TEXT NOT NULL,
                 progress INTEGER NOT NULL DEFAULT 0,
-                completed INTEGER NOT NULL DEFAULT 0,
+                completed BOOLEAN NOT NULL DEFAULT FALSE,
                 PRIMARY KEY (user_id, task_id)
             )
             """
         )
-
-        connection.commit()
 
 
 # ---------------------------------------------------------
@@ -199,25 +199,17 @@ def add_glimmers(
     user_id: int,
     amount: int,
 ):
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         connection.execute(
             """
-            INSERT INTO balances (
-                user_id,
-                glimmers
-            )
-            VALUES (?, ?)
-            ON CONFLICT(user_id)
+            INSERT INTO balances (user_id, glimmers)
+            VALUES (%s, %s)
+            ON CONFLICT (user_id)
             DO UPDATE SET
-                glimmers = glimmers + excluded.glimmers
+                glimmers = balances.glimmers + EXCLUDED.glimmers
             """,
-            (
-                user_id,
-                amount,
-            ),
+            (user_id, amount),
         )
-
-        connection.commit()
 
 
 # ---------------------------------------------------------
@@ -238,17 +230,11 @@ def choose_difficulty_pool():
 
 def generate_tasks():
     selected_tasks = []
-
     attempts = 0
 
-    while (
-        len(selected_tasks) < 3
-        and attempts < 100
-    ):
+    while len(selected_tasks) < 3 and attempts < 100:
         attempts += 1
-
         pool = choose_difficulty_pool()
-
         template = random.choice(pool)
 
         used_stats = {
@@ -291,11 +277,9 @@ def generate_tasks():
 # WEEKLY CYCLE
 # ---------------------------------------------------------
 
-def get_weekly_data(
-    user_id: int,
-):
-    with sqlite3.connect(DATABASE) as connection:
-        row = connection.execute(
+def get_weekly_data(user_id: int):
+    with get_connection() as connection:
+        return connection.execute(
             """
             SELECT
                 week_started,
@@ -303,47 +287,35 @@ def get_weekly_data(
                 guaranteed_claimed,
                 reward_claimed
             FROM weekly_challenges
-            WHERE user_id = ?
+            WHERE user_id = %s
             """,
             (user_id,),
         ).fetchone()
 
-    return row
 
+def is_new_week(week_started: str) -> bool:
+    started = datetime.fromisoformat(week_started)
 
-def is_new_week(
-    week_started: str,
-) -> bool:
-    started = datetime.fromisoformat(
-        week_started
-    )
+    now = datetime.now(timezone.utc)
 
-    now = datetime.now(
-        timezone.utc
-    )
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
 
-    return now >= (
-        started
-        + timedelta(
-            days=WEEKLY_RESET_DAYS
-        )
+    return now >= started + timedelta(
+        days=WEEKLY_RESET_DAYS
     )
 
 
-def create_new_week(
-    user_id: int,
-):
+def create_new_week(user_id: int):
     selected_tasks = generate_tasks()
 
-    now = datetime.now(
-        timezone.utc
-    ).isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         connection.execute(
             """
             DELETE FROM weekly_progress
-            WHERE user_id = ?
+            WHERE user_id = %s
             """,
             (user_id,),
         )
@@ -357,20 +329,18 @@ def create_new_week(
                 guaranteed_claimed,
                 reward_claimed
             )
-            VALUES (?, ?, ?, 1, 0)
-            ON CONFLICT(user_id)
+            VALUES (%s, %s, %s, 1, 0)
+            ON CONFLICT (user_id)
             DO UPDATE SET
-                week_started = excluded.week_started,
-                task_data = excluded.task_data,
+                week_started = EXCLUDED.week_started,
+                task_data = EXCLUDED.task_data,
                 guaranteed_claimed = 1,
                 reward_claimed = 0
             """,
             (
                 user_id,
                 now,
-                json.dumps(
-                    selected_tasks
-                ),
+                json.dumps(selected_tasks),
             ),
         )
 
@@ -383,41 +353,24 @@ def create_new_week(
                     progress,
                     completed
                 )
-                VALUES (?, ?, 0, 0)
+                VALUES (%s, %s, 0, FALSE)
                 """,
-                (
-                    user_id,
-                    task["id"],
-                ),
+                (user_id, task["id"]),
             )
-
-        connection.commit()
 
     return selected_tasks
 
 
-def get_current_tasks(
-    user_id: int,
-):
-    row = get_weekly_data(
-        user_id
-    )
+def get_current_tasks(user_id: int):
+    row = get_weekly_data(user_id)
 
     if row is None:
-        return create_new_week(
-            user_id
-        )
+        return create_new_week(user_id)
 
-    if is_new_week(
-        row[0]
-    ):
-        return create_new_week(
-            user_id
-        )
+    if is_new_week(row["week_started"]):
+        return create_new_week(user_id)
 
-    return json.loads(
-        row[1]
-    )
+    return json.loads(row["task_data"])
 
 
 # ---------------------------------------------------------
@@ -428,95 +381,70 @@ def get_task_progress(
     user_id: int,
     task_id: str,
 ) -> int:
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         row = connection.execute(
             """
             SELECT progress
             FROM weekly_progress
-            WHERE user_id = ?
-            AND task_id = ?
+            WHERE user_id = %s
+            AND task_id = %s
             """,
-            (
-                user_id,
-                task_id,
-            ),
+            (user_id, task_id),
         ).fetchone()
 
-    return (
-        0
-        if row is None
-        else row[0]
-    )
+    return 0 if row is None else row["progress"]
 
 
 def is_task_completed(
     user_id: int,
     task_id: str,
 ) -> bool:
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         row = connection.execute(
             """
             SELECT completed
             FROM weekly_progress
-            WHERE user_id = ?
-            AND task_id = ?
+            WHERE user_id = %s
+            AND task_id = %s
             """,
-            (
-                user_id,
-                task_id,
-            ),
+            (user_id, task_id),
         ).fetchone()
 
-    return bool(
-        row and row[0]
-    )
+    return bool(row and row["completed"])
 
 
-def completed_task_count(
-    user_id: int,
-) -> int:
-    with sqlite3.connect(DATABASE) as connection:
+def completed_task_count(user_id: int) -> int:
+    with get_connection() as connection:
         row = connection.execute(
             """
-            SELECT COUNT(*)
+            SELECT COUNT(*) AS total
             FROM weekly_progress
-            WHERE user_id = ?
-            AND completed = 1
+            WHERE user_id = %s
+            AND completed = TRUE
             """,
             (user_id,),
         ).fetchone()
 
-    return (
-        0
-        if row is None
-        else row[0]
-    )
+    return 0 if row is None else row["total"]
 
 
 # ---------------------------------------------------------
 # DISPLAY
 # ---------------------------------------------------------
 
-def difficulty_emote(
-    difficulty: str,
-) -> str:
+def difficulty_emote(difficulty: str) -> str:
     return {
         "easy": "🟢",
         "medium": "🟡",
         "hard": "🔴",
-    }.get(
-        difficulty,
-        "✦",
-    )
+    }.get(difficulty, "✦")
 
 
 def build_weekly_embed(
     user_id: int,
     selected_tasks: list,
 ) -> discord.Embed:
-    completed = completed_task_count(
-        user_id
-    )
+    completed = completed_task_count(user_id)
 
     description = (
         f"<@{user_id}>\n\n"
@@ -526,26 +454,17 @@ def build_weekly_embed(
         "-# full weekly reward.\n\n"
     )
 
-    for index, task in enumerate(
-        selected_tasks,
-        start=1,
-    ):
+    for index, task in enumerate(selected_tasks, start=1):
         progress = get_task_progress(
             user_id,
             task["id"],
         )
 
-        progress = min(
-            progress,
-            task["amount"],
-        )
+        progress = min(progress, task["amount"])
 
         marker = (
             " ✓"
-            if is_task_completed(
-                user_id,
-                task["id"],
-            )
+            if is_task_completed(user_id, task["id"])
             else ""
         )
 
@@ -577,10 +496,7 @@ def build_weekly_embed(
 # ---------------------------------------------------------
 
 class Weekly(commands.Cog):
-    def __init__(
-        self,
-        bot: commands.Bot,
-    ):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
 
         initialize_weekly_database()
@@ -591,9 +507,7 @@ class Weekly(commands.Cog):
         self.notification_loop.cancel()
 
     async def send_pending_notifications(self):
-        notifications = (
-            get_pending_notifications()
-        )
+        notifications = get_pending_notifications()
 
         for (
             notification_id,
@@ -603,16 +517,12 @@ class Weekly(commands.Cog):
             channel_id,
         ) in notifications:
 
-            guild = self.bot.get_guild(
-                guild_id
-            )
+            guild = self.bot.get_guild(guild_id)
 
             if guild is None:
                 continue
 
-            channel = guild.get_channel(
-                channel_id
-            )
+            channel = guild.get_channel(channel_id)
 
             if channel is None:
                 continue
@@ -639,15 +549,10 @@ class Weekly(commands.Cog):
                     embed=embed,
                 )
 
-                mark_notification_sent(
-                    notification_id
-                )
-
+                mark_notification_sent(notification_id)
                 continue
 
-            selected_tasks = get_current_tasks(
-                user_id
-            )
+            selected_tasks = get_current_tasks(user_id)
 
             task = next(
                 (
@@ -659,19 +564,11 @@ class Weekly(commands.Cog):
             )
 
             if task is None:
-                mark_notification_sent(
-                    notification_id
-                )
+                mark_notification_sent(notification_id)
                 continue
 
-            progress = get_task_progress(
-                user_id,
-                task_id,
-            )
-
-            completed = completed_task_count(
-                user_id
-            )
+            progress = get_task_progress(user_id, task_id)
+            completed = completed_task_count(user_id)
 
             embed = discord.Embed(
                 description=(
@@ -699,9 +596,7 @@ class Weekly(commands.Cog):
                 embed=embed,
             )
 
-            mark_notification_sent(
-                notification_id
-            )
+            mark_notification_sent(notification_id)
 
     @tasks.loop(seconds=5)
     async def notification_loop(self):
@@ -721,26 +616,20 @@ class Weekly(commands.Cog):
     ):
         user_id = interaction.user.id
 
-        existing = get_weekly_data(
-            user_id
-        )
+        existing = get_weekly_data(user_id)
 
         if (
             existing is None
-            or is_new_week(existing[0])
+            or is_new_week(existing["week_started"])
         ):
-            selected_tasks = create_new_week(
-                user_id
-            )
+            selected_tasks = create_new_week(user_id)
 
             add_glimmers(
                 user_id,
                 WEEKLY_GUARANTEED_GLIMMERS,
             )
         else:
-            selected_tasks = get_current_tasks(
-                user_id
-            )
+            selected_tasks = get_current_tasks(user_id)
 
         save_weekly_channel(
             user_id,
@@ -748,13 +637,8 @@ class Weekly(commands.Cog):
             interaction.channel_id,
         )
 
-        header = discord.Embed(
-            color=EMBED_COLOR,
-        )
-
-        header.set_image(
-            url=WEEKLY_HEADER_URL
-        )
+        header = discord.Embed(color=EMBED_COLOR)
+        header.set_image(url=WEEKLY_HEADER_URL)
 
         weekly_embed = build_weekly_embed(
             user_id,
@@ -769,9 +653,5 @@ class Weekly(commands.Cog):
         )
 
 
-async def setup(
-    bot: commands.Bot,
-):
-    await bot.add_cog(
-        Weekly(bot)
-        )
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Weekly(bot))
