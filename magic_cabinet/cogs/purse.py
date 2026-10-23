@@ -1,30 +1,32 @@
-"""Magic Cabinet purse command."""
 
-import sqlite3
+"""Magic Cabinet purse command."""
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from magic_cabinet.database import (
+    get_connection,
+    initialize_database,
+)
 
-DATABASE = "cabinet.db"
 
 EMBED_COLOR = discord.Color.from_str("#4E0017")
 
 GLIMMER_EMOTE = "<:glimmer:1554842064464773172>"
 
 
-def get_glimmers(
-    user_id: int,
-) -> int:
+def get_glimmers(user_id: int) -> int:
     """Return the player's current Glimmer balance."""
 
-    with sqlite3.connect(DATABASE) as connection:
+    initialize_database()
+
+    with get_connection() as connection:
         row = connection.execute(
             """
             SELECT glimmers
             FROM balances
-            WHERE user_id = ?
+            WHERE user_id = %s
             """,
             (user_id,),
         ).fetchone()
@@ -32,31 +34,24 @@ def get_glimmers(
     if row is None:
         return 0
 
-    return row[0]
+    return row["glimmers"]
 
 
 class Purse(commands.Cog):
     """Magic Cabinet purse commands."""
 
-    def __init__(
-        self,
-        bot: commands.Bot,
-    ):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
+        initialize_database()
 
     @app_commands.command(
         name="purse",
         description="View your current Glimmer balance.",
     )
-    async def purse(
-        self,
-        interaction: discord.Interaction,
-    ):
+    async def purse(self, interaction: discord.Interaction):
         """Show the player's current Glimmers."""
 
-        glimmers = get_glimmers(
-            interaction.user.id
-        )
+        glimmers = get_glimmers(interaction.user.id)
 
         embed = discord.Embed(
             description=(
@@ -66,14 +61,8 @@ class Purse(commands.Cog):
             color=EMBED_COLOR,
         )
 
-        await interaction.response.send_message(
-            embed=embed
-        )
+        await interaction.response.send_message(embed=embed)
 
 
-async def setup(
-    bot: commands.Bot,
-):
-    await bot.add_cog(
-        Purse(bot)
-    )
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Purse(bot))
