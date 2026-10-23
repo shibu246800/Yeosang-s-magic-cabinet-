@@ -6,6 +6,8 @@ from psycopg.rows import dict_row
 
 
 def get_connection():
+    """Open a Neon PostgreSQL database connection."""
+
     database_url = os.getenv("DATABASE_URL")
 
     if not database_url:
@@ -21,6 +23,8 @@ def get_connection():
 
 
 def initialize_database():
+    """Create all shared Magic Cabinet database tables."""
+
     with get_connection() as connection:
         connection.execute("""
             CREATE TABLE IF NOT EXISTS drop_channels (
@@ -80,5 +84,25 @@ def initialize_database():
                 received_at TEXT NOT NULL,
                 activated_at TEXT,
                 expires_at TEXT
+            )
+        """)
+
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS player_badges (
+                user_id BIGINT NOT NULL,
+                badge_id TEXT NOT NULL,
+                badge_name TEXT NOT NULL,
+                badge_emote TEXT,
+                PRIMARY KEY (user_id, badge_id)
+            )
+        """)
+
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS player_achievements (
+                user_id BIGINT NOT NULL,
+                achievement_id TEXT NOT NULL,
+                achievement_name TEXT NOT NULL,
+                global_rank INTEGER NOT NULL,
+                PRIMARY KEY (user_id, achievement_id)
             )
         """)
