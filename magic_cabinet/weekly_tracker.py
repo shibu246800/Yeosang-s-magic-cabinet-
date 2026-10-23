@@ -1,4 +1,3 @@
-
 """Weekly challenge progress tracker."""
 
 import json
@@ -46,6 +45,46 @@ def initialize_tracker_database():
             )
             """
         )
+
+        # Safely check the existing weekly_progress.completed column.
+        column = connection.execute(
+            """
+            SELECT data_type
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'weekly_progress'
+              AND column_name = 'completed'
+            """
+        ).fetchone()
+
+        # Convert legacy integer values to PostgreSQL Boolean values.
+        # Existing records are preserved.
+        if column and column["data_type"] in (
+            "integer",
+            "smallint",
+            "bigint",
+        ):
+            connection.execute(
+                """
+                ALTER TABLE weekly_progress
+                ALTER COLUMN completed DROP DEFAULT
+                """
+            )
+
+            connection.execute(
+                """
+                ALTER TABLE weekly_progress
+                ALTER COLUMN completed TYPE BOOLEAN
+                USING completed <> 0
+                """
+            )
+
+            connection.execute(
+                """
+                ALTER TABLE weekly_progress
+                ALTER COLUMN completed SET DEFAULT FALSE
+                """
+            )
 
 
 def save_weekly_channel(
@@ -212,7 +251,7 @@ def record_weekly_progress(
             SELECT COUNT(*) AS total
             FROM weekly_progress
             WHERE user_id = %s
-            AND completed = TRUE
+              AND completed = TRUE
             """,
             (user_id,),
         ).fetchone()
@@ -235,8 +274,8 @@ def record_weekly_progress(
                 SELECT 1
                 FROM weekly_pending_rewards
                 WHERE user_id = %s
-                AND reward_type = 'weekly_grand'
-                AND claimed = 0
+                  AND reward_type = 'weekly_grand'
+                  AND claimed = 0
                 LIMIT 1
                 """,
                 (user_id,),
