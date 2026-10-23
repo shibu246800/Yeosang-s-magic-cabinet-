@@ -1,3 +1,4 @@
+"""Shared Neon PostgreSQL database for Magic Cabinet."""
 
 import os
 
@@ -23,7 +24,7 @@ def get_connection():
 
 
 def initialize_database():
-    """Create all shared Magic Cabinet database tables."""
+    """Create shared tables and safely add missing columns."""
 
     with get_connection() as connection:
         connection.execute("""
@@ -83,8 +84,22 @@ def initialize_database():
                 booster_id TEXT NOT NULL,
                 received_at TEXT NOT NULL,
                 activated_at TEXT,
-                expires_at TEXT
+                expires_at TEXT,
+                uses_remaining INTEGER,
+                source TEXT NOT NULL DEFAULT 'daily'
             )
+        """)
+
+        # Safely update existing tables without deleting ticket records.
+        connection.execute("""
+            ALTER TABLE booster_tickets
+            ADD COLUMN IF NOT EXISTS uses_remaining INTEGER
+        """)
+
+        connection.execute("""
+            ALTER TABLE booster_tickets
+            ADD COLUMN IF NOT EXISTS source
+            TEXT NOT NULL DEFAULT 'daily'
         """)
 
         connection.execute("""
