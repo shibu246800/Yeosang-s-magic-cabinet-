@@ -1,14 +1,11 @@
-
 """Magic Cabinet profile command."""
+
+import sqlite3
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from magic_cabinet.database import (
-    get_connection,
-    initialize_database,
-)
 from magic_cabinet.data.collections import COLLECTIONS
 from magic_cabinet.data.epic import CARDS as EPIC_CARDS
 from magic_cabinet.data.legendary import CARDS as LEGENDARY_CARDS
@@ -16,6 +13,8 @@ from magic_cabinet.data.limited import CARDS as LIMITED_CARDS
 from magic_cabinet.data.normal import CARDS as NORMAL_CARDS
 from magic_cabinet.data.rare import CARDS as RARE_CARDS
 
+
+DATABASE = "cabinet.db"
 
 EMBED_COLOR = discord.Color.from_str("#4E0017")
 
@@ -55,16 +54,22 @@ ALL_CARDS = (
 )
 
 
-def initialize_profile_database():
-    """Create profile-related tables in Neon PostgreSQL."""
+def get_connection():
+    """Open a SQLite database connection."""
 
-    initialize_database()
+    connection = sqlite3.connect(DATABASE)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def initialize_profile_database():
+    """Create profile-related SQLite tables."""
 
     with get_connection() as connection:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS player_badges (
-                user_id BIGINT NOT NULL,
+                user_id INTEGER NOT NULL,
                 badge_id TEXT NOT NULL,
                 badge_name TEXT NOT NULL,
                 badge_emote TEXT,
@@ -76,7 +81,7 @@ def initialize_profile_database():
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS player_achievements (
-                user_id BIGINT NOT NULL,
+                user_id INTEGER NOT NULL,
                 achievement_id TEXT NOT NULL,
                 achievement_name TEXT NOT NULL,
                 global_rank INTEGER NOT NULL,
@@ -86,9 +91,7 @@ def initialize_profile_database():
         )
 
 
-def get_player_vaults(
-    user_id: int,
-) -> list[str]:
+def get_player_vaults(user_id: int) -> list[str]:
     """Return the player's selected Vaults."""
 
     with get_connection() as connection:
@@ -96,7 +99,7 @@ def get_player_vaults(
             """
             SELECT vault
             FROM player_vaults
-            WHERE user_id = %s
+            WHERE user_id = ?
             """,
             (user_id,),
         ).fetchall()
@@ -114,9 +117,7 @@ def get_player_vaults(
     ]
 
 
-def get_glimmers(
-    user_id: int,
-) -> int:
+def get_glimmers(user_id: int) -> int:
     """Return the player's current Glimmer balance."""
 
     with get_connection() as connection:
@@ -124,7 +125,7 @@ def get_glimmers(
             """
             SELECT glimmers
             FROM balances
-            WHERE user_id = %s
+            WHERE user_id = ?
             """,
             (user_id,),
         ).fetchone()
@@ -135,9 +136,7 @@ def get_glimmers(
     return row["glimmers"]
 
 
-def get_bag_cards(
-    user_id: int,
-) -> set[int]:
+def get_bag_cards(user_id: int) -> set[int]:
     """Return all card IDs currently owned by the player."""
 
     with get_connection() as connection:
@@ -145,7 +144,7 @@ def get_bag_cards(
             """
             SELECT card_id
             FROM bag
-            WHERE user_id = %s
+            WHERE user_id = ?
             AND quantity > 0
             """,
             (user_id,),
@@ -157,9 +156,7 @@ def get_bag_cards(
     }
 
 
-def get_completed_collections(
-    user_id: int,
-) -> int:
+def get_completed_collections(user_id: int) -> int:
     """Count fully completed collections."""
 
     owned_cards = get_bag_cards(user_id)
@@ -206,9 +203,7 @@ def get_completed_collections(
     return completed
 
 
-def get_badges(
-    user_id: int,
-) -> list[tuple[str, str | None]]:
+def get_badges(user_id: int) -> list[tuple[str, str | None]]:
     """Return earned badges."""
 
     with get_connection() as connection:
@@ -216,7 +211,7 @@ def get_badges(
             """
             SELECT badge_name, badge_emote
             FROM player_badges
-            WHERE user_id = %s
+            WHERE user_id = ?
             ORDER BY badge_id
             """,
             (user_id,),
@@ -228,9 +223,7 @@ def get_badges(
     ]
 
 
-def get_top_achievements(
-    user_id: int,
-) -> list[tuple[str, int]]:
+def get_top_achievements(user_id: int) -> list[tuple[str, int]]:
     """Return the player's global Top 3 achievements."""
 
     with get_connection() as connection:
@@ -238,7 +231,7 @@ def get_top_achievements(
             """
             SELECT achievement_name, global_rank
             FROM player_achievements
-            WHERE user_id = %s
+            WHERE user_id = ?
             AND global_rank <= 3
             ORDER BY global_rank ASC
             LIMIT 3
@@ -252,9 +245,7 @@ def get_top_achievements(
     ]
 
 
-def format_vaults(
-    vaults: list[str],
-) -> str:
+def format_vaults(vaults: list[str]) -> str:
     """Format selected Vaults."""
 
     if not vaults:
@@ -369,10 +360,7 @@ def build_profile_content(
 class Profile(commands.Cog):
     """Magic Cabinet profile commands."""
 
-    def __init__(
-        self,
-        bot: commands.Bot,
-    ):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
         initialize_profile_database()
 
@@ -413,7 +401,5 @@ class Profile(commands.Cog):
         )
 
 
-async def setup(
-    bot: commands.Bot,
-):
+async def setup(bot: commands.Bot):
     await bot.add_cog(Profile(bot))
