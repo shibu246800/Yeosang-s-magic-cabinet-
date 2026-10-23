@@ -78,14 +78,14 @@ class Cabinet(commands.GroupCog, name="cabinet"):
                     channel4_id,
                     channel5_id
                 )
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (guild_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(guild_id)
                 DO UPDATE SET
-                    channel1_id = EXCLUDED.channel1_id,
-                    channel2_id = EXCLUDED.channel2_id,
-                    channel3_id = EXCLUDED.channel3_id,
-                    channel4_id = EXCLUDED.channel4_id,
-                    channel5_id = EXCLUDED.channel5_id
+                    channel1_id = excluded.channel1_id,
+                    channel2_id = excluded.channel2_id,
+                    channel3_id = excluded.channel3_id,
+                    channel4_id = excluded.channel4_id,
+                    channel5_id = excluded.channel5_id
                 """,
                 (
                     interaction.guild_id,
@@ -127,7 +127,7 @@ class Cabinet(commands.GroupCog, name="cabinet"):
                     channel4_id,
                     channel5_id
                 FROM drop_channels
-                WHERE guild_id = %s
+                WHERE guild_id = ?
                 """,
                 (guild_id,),
             ).fetchone()
