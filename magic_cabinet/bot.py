@@ -8,7 +8,10 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from flask import Flask
 
-from magic_cabinet.database import get_connection
+from magic_cabinet.database import (
+    get_connection,
+    initialize_database,
+)
 
 
 load_dotenv()
@@ -18,6 +21,10 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
     raise RuntimeError("DISCORD_TOKEN is missing.")
 
+
+# ---------------------------------------------------------
+# HEALTH SERVER
+# ---------------------------------------------------------
 
 app = Flask(__name__)
 
@@ -43,6 +50,10 @@ threading.Thread(
 
 EMBED_COLOR = discord.Color.from_str("#4E0017")
 
+
+# ---------------------------------------------------------
+# COMMAND ACCESS CONTROL
+# ---------------------------------------------------------
 
 class CabinetCommandTree(app_commands.CommandTree):
 
@@ -74,13 +85,12 @@ class CabinetCommandTree(app_commands.CommandTree):
             return False
 
         try:
-            # Check whether this server has completed setup.
             with get_connection() as connection:
                 setup_result = connection.execute(
                     """
                     SELECT 1
                     FROM drop_channels
-                    WHERE guild_id = %s
+                    WHERE guild_id = ?
                     """,
                     (interaction.guild_id,),
                 ).fetchone()
@@ -98,12 +108,11 @@ class CabinetCommandTree(app_commands.CommandTree):
                 if command_name == "magic awaken":
                     return True
 
-                # Other commands require the player's saved vault.
                 vault_result = connection.execute(
                     """
                     SELECT 1
                     FROM player_vaults
-                    WHERE user_id = %s
+                    WHERE user_id = ?
                     LIMIT 1
                     """,
                     (interaction.user.id,),
@@ -120,10 +129,10 @@ class CabinetCommandTree(app_commands.CommandTree):
 
             return True
 
-        except Exception:
+        except Exception as error:
             print(
                 "ERROR: The Cabinet command lock could not "
-                "check the database."
+                f"check the database: {error}"
             )
 
             await interaction.response.send_message(
@@ -134,6 +143,10 @@ class CabinetCommandTree(app_commands.CommandTree):
             return False
 
 
+# ---------------------------------------------------------
+# BOT
+# ---------------------------------------------------------
+
 intents = discord.Intents.default()
 
 
@@ -142,57 +155,28 @@ class MagicCabinetBot(commands.Bot):
     async def setup_hook(self):
         print("=== SETUP HOOK STARTED ===")
 
-        await self.load_extension(
-            "magic_cabinet.cogs.cabinet"
-        )
+        # Create the SQLite tables before loading extensions.
+        initialize_database()
 
-        await self.load_extension(
-            "magic_cabinet.cogs.drop"
-        )
+        extensions = [
+            "magic_cabinet.cogs.cabinet",
+            "magic_cabinet.cogs.drop",
+            "magic_cabinet.cogs.magic",
+            "magic_cabinet.cogs.profile.profile",
+            "magic_cabinet.cogs.purse",
+            "magic_cabinet.cogs.earn",
+            "magic_cabinet.cogs.daily",
+            "magic_cabinet.cogs.booster",
+            "magic_cabinet.cogs.weekly",
+            "magic_cabinet.cogs.rewards",
+            "magic_cabinet.cogs.test",
+            "magic_cabinet.cogs.bag",
+            "magic_cabinet.cogs.collection",
+        ]
 
-        await self.load_extension(
-            "magic_cabinet.cogs.magic"
-        )
-
-        await self.load_extension(
-            "magic_cabinet.cogs.profile.profile"
-        )
-
-        await self.load_extension(
-            "magic_cabinet.cogs.purse"
-        )
-
-        await self.load_extension(
-            "magic_cabinet.cogs.earn"
-        )
-
-        await self.load_extension(
-            "magic_cabinet.cogs.daily"
-        )
-
-        await self.load_extension(
-            "magic_cabinet.cogs.booster"
-        )
-
-        await self.load_extension(
-            "magic_cabinet.cogs.weekly"
-        )
-
-        await self.load_extension(
-            "magic_cabinet.cogs.rewards"
-        )
-
-        await self.load_extension(
-            "magic_cabinet.cogs.test"
-        )
-
-        await self.load_extension(
-            "magic_cabinet.cogs.bag"
-        )
-
-        await self.load_extension(
-            "magic_cabinet.cogs.collection"
-        )
+        for extension in extensions:
+            await self.load_extension(extension)
+            print(f"Loaded: {extension}")
 
         print("=== ALL EXTENSIONS LOADED ===")
 
@@ -210,11 +194,13 @@ bot = MagicCabinetBot(
 )
 
 
+# ---------------------------------------------------------
+# EVENTS
+# ---------------------------------------------------------
+
 @bot.event
 async def on_ready():
-    print(
-        f"Magic Cabinet is online as {bot.user}"
-    )
+    print(f"Magic Cabinet is online as {bot.user}")
 
 
 @bot.event
@@ -225,9 +211,7 @@ async def on_guild_join(guild):
         channel = guild.system_channel
 
         if channel is not None:
-            await channel.send(
-                arrival_message
-            )
+            await channel.send(arrival_message)
 
     except discord.Forbidden:
         pass
