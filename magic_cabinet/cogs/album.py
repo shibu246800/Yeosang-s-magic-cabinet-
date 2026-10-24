@@ -356,8 +356,7 @@ class Album(commands.Cog):
                 collections,
             ),
             view=view,
-            ephemeral=True,
-        )
+      )
 
 
 async def setup(bot):
