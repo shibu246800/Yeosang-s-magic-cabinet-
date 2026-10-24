@@ -1,9 +1,13 @@
+
 """Weekly challenge progress tracker."""
 
 import json
 from datetime import datetime, timezone
 
-from magic_cabinet.database import get_connection, initialize_database
+from magic_cabinet.database import (
+    get_connection,
+    initialize_database,
+)
 
 
 def initialize_tracker_database():
@@ -13,8 +17,8 @@ def initialize_tracker_database():
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS weekly_notifications (
-                id BIGSERIAL PRIMARY KEY,
-                user_id BIGINT NOT NULL,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
                 task_id TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 sent INTEGER NOT NULL DEFAULT 0
@@ -25,9 +29,9 @@ def initialize_tracker_database():
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS weekly_delivery (
-                user_id BIGINT PRIMARY KEY,
-                guild_id BIGINT NOT NULL,
-                channel_id BIGINT NOT NULL
+                user_id INTEGER PRIMARY KEY,
+                guild_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL
             )
             """
         )
@@ -35,10 +39,10 @@ def initialize_tracker_database():
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS weekly_pending_rewards (
-                reward_id BIGSERIAL PRIMARY KEY,
-                user_id BIGINT NOT NULL,
+                reward_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
                 reward_type TEXT NOT NULL,
-                amount BIGINT NOT NULL DEFAULT 0,
+                amount INTEGER NOT NULL DEFAULT 0,
                 task_id TEXT,
                 claimed INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
@@ -46,52 +50,15 @@ def initialize_tracker_database():
             """
         )
 
-        # Safely check the existing weekly_progress.completed column.
-        column = connection.execute(
-            """
-            SELECT data_type
-            FROM information_schema.columns
-            WHERE table_schema = current_schema()
-              AND table_name = 'weekly_progress'
-              AND column_name = 'completed'
-            """
-        ).fetchone()
-
-        # Convert legacy integer values to PostgreSQL Boolean values.
-        # Existing records are preserved.
-        if column and column["data_type"] in (
-            "integer",
-            "smallint",
-            "bigint",
-        ):
-            connection.execute(
-                """
-                ALTER TABLE weekly_progress
-                ALTER COLUMN completed DROP DEFAULT
-                """
-            )
-
-            connection.execute(
-                """
-                ALTER TABLE weekly_progress
-                ALTER COLUMN completed TYPE BOOLEAN
-                USING completed <> 0
-                """
-            )
-
-            connection.execute(
-                """
-                ALTER TABLE weekly_progress
-                ALTER COLUMN completed SET DEFAULT FALSE
-                """
-            )
-
 
 def save_weekly_channel(
     user_id: int,
     guild_id: int,
     channel_id: int,
 ):
+    if guild_id is None:
+        return
+
     with get_connection() as connection:
         connection.execute(
             """
@@ -100,11 +67,11 @@ def save_weekly_channel(
                 guild_id,
                 channel_id
             )
-            VALUES (%s, %s, %s)
-            ON CONFLICT (user_id)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id)
             DO UPDATE SET
-                guild_id = EXCLUDED.guild_id,
-                channel_id = EXCLUDED.channel_id
+                guild_id = excluded.guild_id,
+                channel_id = excluded.channel_id
             """,
             (user_id, guild_id, channel_id),
         )
@@ -118,7 +85,7 @@ def record_weekly_progress(
     """
     Add progress to the current weekly challenge.
 
-    Supported stats currently include:
+    Supported stats:
         new_cards
         glimmers_earned
         drops_claimed
@@ -134,7 +101,7 @@ def record_weekly_progress(
             """
             SELECT task_data
             FROM weekly_challenges
-            WHERE user_id = %s
+            WHERE user_id = ?
             """,
             (user_id,),
         ).fetchone()
@@ -151,7 +118,7 @@ def record_weekly_progress(
             """
             SELECT task_id, progress, completed
             FROM weekly_progress
-            WHERE user_id = %s
+            WHERE user_id = ?
             """,
             (user_id,),
         ).fetchall()
@@ -185,30 +152,41 @@ def record_weekly_progress(
 
             target = int(task.get("amount", 0))
 
+            if target <= 0:
+                continue
+
             new_progress = min(
                 current_progress + amount,
                 target,
             )
 
-            now_completed = (
-                target > 0
-                and new_progress >= target
-            )
+            now_completed = new_progress >= target
 
             connection.execute(
                 """
-                UPDATE weekly_progress
-                SET progress = %s,
-                    completed = %s
-                WHERE user_id = %s
-                AND task_id = %s
-                """,
-                (
-                    new_progress,
-                    now_completed,
+                INSERT INTO weekly_progress (
                     user_id,
                     task_id,
+                    progress,
+                    completed
+                )
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(user_id, task_id)
+                DO UPDATE SET
+                    progress = excluded.progress,
+                    completed = excluded.completed
+                """,
+                (
+                    user_id,
+                    task_id,
+                    new_progress,
+                    int(now_completed),
                 ),
+            )
+
+            progress_map[task_id] = (
+                new_progress,
+                now_completed,
             )
 
             if now_completed:
@@ -226,7 +204,7 @@ def record_weekly_progress(
                     created_at,
                     sent
                 )
-                VALUES (%s, %s, %s, 0)
+                VALUES (?, ?, ?, 0)
                 """,
                 (user_id, task_id, now),
             )
@@ -241,7 +219,7 @@ def record_weekly_progress(
                     claimed,
                     created_at
                 )
-                VALUES (%s, 'task_glimmers', %s, %s, 0, %s)
+                VALUES (?, 'task_glimmers', ?, ?, 0, ?)
                 """,
                 (user_id, reward, task_id, now),
             )
@@ -250,8 +228,8 @@ def record_weekly_progress(
             """
             SELECT COUNT(*) AS total
             FROM weekly_progress
-            WHERE user_id = %s
-              AND completed = TRUE
+            WHERE user_id = ?
+              AND completed = 1
             """,
             (user_id,),
         ).fetchone()
@@ -260,7 +238,7 @@ def record_weekly_progress(
             """
             SELECT COUNT(*) AS total
             FROM weekly_progress
-            WHERE user_id = %s
+            WHERE user_id = ?
             """,
             (user_id,),
         ).fetchone()
@@ -273,12 +251,16 @@ def record_weekly_progress(
                 """
                 SELECT 1
                 FROM weekly_pending_rewards
-                WHERE user_id = %s
+                WHERE user_id = ?
                   AND reward_type = 'weekly_grand'
-                  AND claimed = 0
+                  AND created_at >= (
+                      SELECT week_started
+                      FROM weekly_challenges
+                      WHERE user_id = ?
+                  )
                 LIMIT 1
                 """,
-                (user_id,),
+                (user_id, user_id),
             ).fetchone()
 
             if grand_reward_exists is None:
@@ -292,7 +274,7 @@ def record_weekly_progress(
                         claimed,
                         created_at
                     )
-                    VALUES (%s, 'weekly_grand', 0, NULL, 0, %s)
+                    VALUES (?, 'weekly_grand', 0, NULL, 0, ?)
                     """,
                     (user_id, now),
                 )
@@ -305,13 +287,15 @@ def record_weekly_progress(
                         created_at,
                         sent
                     )
-                    VALUES (%s, '__weekly_complete__', %s, 0)
+                    VALUES (?, '__weekly_complete__', ?, 0)
                     """,
                     (user_id, now),
                 )
 
 
 def get_pending_notifications():
+    initialize_tracker_database()
+
     with get_connection() as connection:
         rows = connection.execute(
             """
@@ -329,7 +313,6 @@ def get_pending_notifications():
             """
         ).fetchall()
 
-    # Preserve the original tuple-style return format for callers.
     return [
         (
             row["id"],
@@ -348,7 +331,7 @@ def mark_notification_sent(notification_id: int):
             """
             UPDATE weekly_notifications
             SET sent = 1
-            WHERE id = %s
+            WHERE id = ?
             """,
             (notification_id,),
         )
