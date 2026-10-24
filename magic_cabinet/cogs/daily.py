@@ -1,3 +1,4 @@
+
 """Magic Cabinet daily rewards."""
 
 import random
@@ -54,7 +55,7 @@ BOOSTERS = [
         "id": "starbox",
         "name": "Starbox",
         "description": (
-            "Choose a Card ID and receive 3 copies "
+            "Choose a Card ID and receive 4 copies "
             "for a small Glimmer fee."
         ),
     },
@@ -81,39 +82,97 @@ def initialize_daily_database():
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS daily_data (
-                user_id BIGINT PRIMARY KEY,
+                user_id INTEGER PRIMARY KEY,
                 last_claim_at TEXT
             )
             """
         )
 
+        # Ensure the booster ticket table exists.
+        # Existing tables are preserved.
         connection.execute(
             """
-            ALTER TABLE booster_tickets
-            ADD COLUMN IF NOT EXISTS uses_remaining INTEGER
+            CREATE TABLE IF NOT EXISTS booster_tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                booster_id TEXT NOT NULL,
+                received_at TEXT NOT NULL,
+                activated_at TEXT,
+                expires_at TEXT,
+                uses_remaining INTEGER,
+                source TEXT NOT NULL DEFAULT 'daily'
+            )
             """
         )
 
-        connection.execute(
-            """
-            ALTER TABLE booster_tickets
-            ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'daily'
-            """
-        )
+        # SQLite does not support ADD COLUMN IF NOT EXISTS.
+        columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(booster_tickets)"
+            ).fetchall()
+        }
+
+        if "uses_remaining" not in columns:
+            connection.execute(
+                """
+                ALTER TABLE booster_tickets
+                ADD COLUMN uses_remaining INTEGER
+                """
+            )
+
+        if "source" not in columns:
+            connection.execute(
+                """
+                ALTER TABLE booster_tickets
+                ADD COLUMN source TEXT NOT NULL DEFAULT 'daily'
+                """
+            )
 
 
 def is_registered(user_id: int) -> bool:
+    """Check the available player registration tables."""
     with get_connection() as connection:
-        row = connection.execute(
-            """
-            SELECT user_id
-            FROM players
-            WHERE user_id = %s
-            """,
-            (user_id,),
-        ).fetchone()
+        tables = {
+            row["name"]
+            for row in connection.execute(
+                """
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'table'
+                """
+            ).fetchall()
+        }
 
-    return row is not None
+        # Support either registration table if it exists.
+        for table_name in ("players", "player_vaults"):
+            if table_name not in tables:
+                continue
+
+            columns = {
+                row["name"]
+                for row in connection.execute(
+                    f"PRAGMA table_info({table_name})"
+                ).fetchall()
+            }
+
+            if "user_id" not in columns:
+                continue
+
+            row = connection.execute(
+                f"""
+                SELECT user_id
+                FROM {table_name}
+                WHERE user_id = ?
+                LIMIT 1
+                """,
+                (user_id,),
+            ).fetchone()
+
+            if row is not None:
+                return True
+
+    return False
 
 
 def get_daily_claim(user_id: int):
@@ -122,7 +181,7 @@ def get_daily_claim(user_id: int):
             """
             SELECT last_claim_at
             FROM daily_data
-            WHERE user_id = %s
+            WHERE user_id = ?
             """,
             (user_id,),
         ).fetchone()
@@ -134,7 +193,7 @@ def get_glimmers(user_id: int) -> int:
             """
             SELECT glimmers
             FROM balances
-            WHERE user_id = %s
+            WHERE user_id = ?
             """,
             (user_id,),
         ).fetchone()
@@ -150,23 +209,23 @@ def add_glimmers(user_id: int, amount: int):
                 user_id,
                 glimmers
             )
-            VALUES (%s, %s)
-            ON CONFLICT (user_id)
+            VALUES (?, ?)
+            ON CONFLICT(user_id)
             DO UPDATE SET
-                glimmers = balances.glimmers + EXCLUDED.glimmers
+                glimmers = balances.glimmers + excluded.glimmers
             """,
             (user_id, amount),
         )
 
 
-def get_card_quantity(user_id: int, card_id: int) -> int:
+def get_card_quantity(user_id: int, card_id):
     with get_connection() as connection:
         row = connection.execute(
             """
             SELECT quantity
             FROM bag
-            WHERE user_id = %s
-            AND card_id = %s
+            WHERE user_id = ?
+            AND card_id = ?
             """,
             (user_id, card_id),
         ).fetchone()
@@ -176,31 +235,40 @@ def get_card_quantity(user_id: int, card_id: int) -> int:
 
 def add_card_to_bag(
     user_id: int,
-    card_id: int,
+    card_id,
 ) -> tuple[int, bool]:
     with get_connection() as connection:
         existing = connection.execute(
             """
             SELECT quantity
             FROM bag
-            WHERE user_id = %s
-            AND card_id = %s
+            WHERE user_id = ?
+            AND card_id = ?
             """,
             (user_id, card_id),
         ).fetchone()
 
-        row = connection.execute(
+        connection.execute(
             """
             INSERT INTO bag (
                 user_id,
                 card_id,
                 quantity
             )
-            VALUES (%s, %s, 1)
-            ON CONFLICT (user_id, card_id)
+            VALUES (?, ?, 1)
+            ON CONFLICT(user_id, card_id)
             DO UPDATE SET
                 quantity = bag.quantity + 1
-            RETURNING quantity
+            """,
+            (user_id, card_id),
+        )
+
+        row = connection.execute(
+            """
+            SELECT quantity
+            FROM bag
+            WHERE user_id = ?
+            AND card_id = ?
             """,
             (user_id, card_id),
         ).fetchone()
@@ -232,10 +300,10 @@ def save_daily_claim(
                 user_id,
                 last_claim_at
             )
-            VALUES (%s, %s)
-            ON CONFLICT (user_id)
+            VALUES (?, ?)
+            ON CONFLICT(user_id)
             DO UPDATE SET
-                last_claim_at = EXCLUDED.last_claim_at
+                last_claim_at = excluded.last_claim_at
             """,
             (
                 user_id,
@@ -255,9 +323,10 @@ def save_booster_ticket(
             INSERT INTO booster_tickets (
                 user_id,
                 booster_id,
-                received_at
+                received_at,
+                source
             )
-            VALUES (%s, %s, %s)
+            VALUES (?, ?, ?, 'daily')
             """,
             (
                 user_id,
@@ -317,6 +386,11 @@ class Daily(commands.Cog):
             last_claim = datetime.fromisoformat(
                 claim["last_claim_at"]
             )
+
+            # Handle older timestamps that may lack timezone data.
+            if last_claim.tzinfo is None:
+                last_claim = last_claim.replace(tzinfo=timezone.utc)
+
             next_claim = last_claim + timedelta(
                 seconds=DAILY_COOLDOWN
             )
@@ -326,9 +400,7 @@ class Daily(commands.Cog):
             )
 
             if remaining_seconds > 0:
-                remaining = format_remaining(
-                    remaining_seconds
-                )
+                remaining = format_remaining(remaining_seconds)
 
                 embed = discord.Embed(
                     description=(
@@ -407,14 +479,10 @@ class Daily(commands.Cog):
 
         reward_embed.set_image(url=card["image"])
 
-        header_embed = discord.Embed(
-            color=EMBED_COLOR
-        )
+        header_embed = discord.Embed(color=EMBED_COLOR)
         header_embed.set_image(url=HEADER_URL)
 
-        divider_embed = discord.Embed(
-            color=EMBED_COLOR
-        )
+        divider_embed = discord.Embed(color=EMBED_COLOR)
         divider_embed.set_image(url=DIVIDER_URL)
 
         await interaction.response.send_message(
