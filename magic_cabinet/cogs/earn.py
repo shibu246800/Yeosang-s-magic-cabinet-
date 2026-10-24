@@ -29,7 +29,7 @@ def initialize_earn_database():
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS earn_data (
-                user_id BIGINT PRIMARY KEY,
+                user_id INTEGER PRIMARY KEY,
                 last_earn_at TEXT,
                 daily_earnings INTEGER NOT NULL DEFAULT 100,
                 reset_date TEXT
@@ -44,7 +44,7 @@ def is_registered(user_id: int) -> bool:
             """
             SELECT user_id
             FROM players
-            WHERE user_id = %s
+            WHERE user_id = ?
             """,
             (user_id,),
         ).fetchone()
@@ -58,7 +58,7 @@ def get_balance(user_id: int) -> int:
             """
             SELECT glimmers
             FROM balances
-            WHERE user_id = %s
+            WHERE user_id = ?
             """,
             (user_id,),
         ).fetchone()
@@ -71,10 +71,10 @@ def add_glimmers(user_id: int, amount: int) -> int:
         connection.execute(
             """
             INSERT INTO balances (user_id, glimmers)
-            VALUES (%s, %s)
-            ON CONFLICT (user_id)
+            VALUES (?, ?)
+            ON CONFLICT(user_id)
             DO UPDATE SET
-                glimmers = balances.glimmers + EXCLUDED.glimmers
+                glimmers = balances.glimmers + excluded.glimmers
             """,
             (user_id, amount),
         )
@@ -88,7 +88,7 @@ def get_earn_data(user_id: int):
             """
             SELECT last_earn_at, daily_earnings, reset_date
             FROM earn_data
-            WHERE user_id = %s
+            WHERE user_id = ?
             """,
             (user_id,),
         ).fetchone()
@@ -104,7 +104,7 @@ def reset_daily_earnings_if_needed(user_id: int):
             """
             SELECT reset_date
             FROM earn_data
-            WHERE user_id = %s
+            WHERE user_id = ?
             """,
             (user_id,),
         ).fetchone()
@@ -117,7 +117,7 @@ def reset_daily_earnings_if_needed(user_id: int):
                     daily_earnings,
                     reset_date
                 )
-                VALUES (%s, %s, %s)
+                VALUES (?, ?, ?)
                 """,
                 (user_id, FIRST_EARNING, today),
             )
@@ -125,9 +125,9 @@ def reset_daily_earnings_if_needed(user_id: int):
             connection.execute(
                 """
                 UPDATE earn_data
-                SET daily_earnings = %s,
-                    reset_date = %s
-                WHERE user_id = %s
+                SET daily_earnings = ?,
+                    reset_date = ?
+                WHERE user_id = ?
                 """,
                 (FIRST_EARNING, today, user_id),
             )
@@ -144,10 +144,7 @@ class Earn(commands.Cog):
         name="earn",
         description="Earn hourly Glimmers.",
     )
-    async def earn(
-        self,
-        interaction: discord.Interaction,
-    ):
+    async def earn(self, interaction: discord.Interaction):
         user_id = interaction.user.id
 
         if not is_registered(user_id):
@@ -177,6 +174,9 @@ class Earn(commands.Cog):
         if last_earn_at:
             last_earn = datetime.fromisoformat(last_earn_at)
 
+            if last_earn.tzinfo is None:
+                last_earn = last_earn.replace(tzinfo=timezone.utc)
+
             elapsed = (now - last_earn).total_seconds()
 
             if elapsed < COOLDOWN_SECONDS:
@@ -205,10 +205,7 @@ class Earn(commands.Cog):
                 )
                 return
 
-        new_balance = add_glimmers(
-            user_id,
-            earning_amount,
-        )
+        new_balance = add_glimmers(user_id, earning_amount)
 
         record_weekly_progress(
             user_id,
@@ -222,9 +219,9 @@ class Earn(commands.Cog):
             connection.execute(
                 """
                 UPDATE earn_data
-                SET last_earn_at = %s,
-                    daily_earnings = %s
-                WHERE user_id = %s
+                SET last_earn_at = ?,
+                    daily_earnings = ?
+                WHERE user_id = ?
                 """,
                 (now.isoformat(), next_amount, user_id),
             )
@@ -241,9 +238,7 @@ class Earn(commands.Cog):
             color=EMBED_COLOR,
         )
 
-        await interaction.response.send_message(
-            embed=embed,
-        )
+        await interaction.response.send_message(embed=embed)
 
 
 async def setup(bot: commands.Bot):
