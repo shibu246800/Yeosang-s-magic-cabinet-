@@ -1,3 +1,4 @@
+
 """Drop command."""
 
 import asyncio
@@ -148,7 +149,7 @@ def get_bag_quantity(user_id: int, card_id: int) -> int:
         row = connection.execute(
             """
             SELECT quantity FROM bag
-            WHERE user_id = %s AND card_id = %s
+            WHERE user_id = ? AND card_id = ?
             """,
             (user_id, card_id),
         ).fetchone()
@@ -161,7 +162,7 @@ def add_to_bag(user_id: int, card_id: int) -> tuple[int, bool]:
         row = connection.execute(
             """
             SELECT quantity FROM bag
-            WHERE user_id = %s AND card_id = %s
+            WHERE user_id = ? AND card_id = ?
             """,
             (user_id, card_id),
         ).fetchone()
@@ -170,7 +171,7 @@ def add_to_bag(user_id: int, card_id: int) -> tuple[int, bool]:
             connection.execute(
                 """
                 INSERT INTO bag (user_id, card_id, quantity)
-                VALUES (%s, %s, 1)
+                VALUES (?, ?, 1)
                 """,
                 (user_id, card_id),
             )
@@ -179,8 +180,8 @@ def add_to_bag(user_id: int, card_id: int) -> tuple[int, bool]:
         new_quantity = row["quantity"] + 1
         connection.execute(
             """
-            UPDATE bag SET quantity = %s
-            WHERE user_id = %s AND card_id = %s
+            UPDATE bag SET quantity = ?
+            WHERE user_id = ? AND card_id = ?
             """,
             (new_quantity, user_id, card_id),
         )
@@ -193,9 +194,9 @@ def add_glimmers(user_id: int, amount: int):
         connection.execute(
             """
             INSERT INTO balances (user_id, glimmers)
-            VALUES (%s, %s)
-            ON CONFLICT (user_id)
-            DO UPDATE SET glimmers = balances.glimmers + EXCLUDED.glimmers
+            VALUES (?, ?)
+            ON CONFLICT(user_id)
+            DO UPDATE SET glimmers = balances.glimmers + excluded.glimmers
             """,
             (user_id, amount),
         )
@@ -206,7 +207,7 @@ def get_player_vaults(user_id: int) -> list[str]:
         rows = connection.execute(
             """
             SELECT vault FROM player_vaults
-            WHERE user_id = %s
+            WHERE user_id = ?
             """,
             (user_id,),
         ).fetchall()
@@ -224,7 +225,7 @@ def get_saved_drop_channels(guild_id: int) -> list[int]:
             SELECT channel1_id, channel2_id, channel3_id,
                    channel4_id, channel5_id
             FROM drop_channels
-            WHERE guild_id = %s
+            WHERE guild_id = ?
             """,
             (guild_id,),
         ).fetchone()
@@ -258,7 +259,13 @@ def format_card(card: dict, owner_id: int, position: int) -> str:
 
 class CardButton(discord.ui.Button):
 
-    def __init__(self, card: dict, number: int, owner_id: int, view: "CardDropView"):
+    def __init__(
+        self,
+        card: dict,
+        number: int,
+        owner_id: int,
+        view: "CardDropView",
+    ):
         self.card = card
         self.number = number
         self.owner_id = owner_id
@@ -267,7 +274,9 @@ class CardButton(discord.ui.Button):
 
         super().__init__(
             label="0",
-            emoji=discord.PartialEmoji.from_str(RARITY_EMOTES[card["stars"]]),
+            emoji=discord.PartialEmoji.from_str(
+                RARITY_EMOTES[card["stars"]]
+            ),
             style=discord.ButtonStyle.secondary,
             custom_id=f"cabinet_card_{card['id']}_{number}",
         )
@@ -309,7 +318,10 @@ class CardButton(discord.ui.Button):
                             f"🔒 This card belongs to the **{card_vault} Vault**.\n\n"
                             "You haven't selected this Vault, so you cannot claim this card.\n\n"
                             "Your selected Vaults:\n"
-                            + "\n".join(f"➤ **{vault}**" for vault in selected_vaults)
+                            + "\n".join(
+                                f"➤ **{vault}**"
+                                for vault in selected_vaults
+                            )
                         ),
                         color=CABINET_COLOR,
                     ),
@@ -351,7 +363,9 @@ class CardButton(discord.ui.Button):
                 if previous_choice == self.number:
                     await interaction.response.send_message(
                         embed=discord.Embed(
-                            description=f"{OWNER_EMOTE} You are already claiming this card.",
+                            description=(
+                                f"{OWNER_EMOTE} You are already claiming this card."
+                            ),
                             color=CABINET_COLOR,
                         ),
                         ephemeral=True,
@@ -361,13 +375,22 @@ class CardButton(discord.ui.Button):
                 if previous_choice is not None:
                     previous_button = view.get_button(previous_choice)
                     if previous_button is not None:
-                        if previous_button.claimant and previous_button.claimant.id == user_id:
+                        if (
+                            previous_button.claimant
+                            and previous_button.claimant.id == user_id
+                        ):
                             previous_button.claimant = None
                             previous_button.label = "0"
 
-                if self.claimant is not None and self.claimant.id != user_id:
+                if (
+                    self.claimant is not None
+                    and self.claimant.id != user_id
+                ):
                     previous_claimant = self.claimant
-                    if view.player_choices.get(previous_claimant.id) == self.number:
+                    if (
+                        view.player_choices.get(previous_claimant.id)
+                        == self.number
+                    ):
                         del view.player_choices[previous_claimant.id]
 
                 self.claimant = interaction.user
@@ -402,6 +425,7 @@ class CardDropView(discord.ui.View):
     async def update_buttons(self):
         if self.message is None:
             return
+
         try:
             await self.message.edit(view=self)
         except discord.NotFound:
@@ -419,6 +443,7 @@ class CardDropView(discord.ui.View):
                 await self.message.edit(view=self)
             except discord.NotFound:
                 pass
+
             await self.send_results()
 
     async def send_results(self):
@@ -438,8 +463,14 @@ class CardDropView(discord.ui.View):
             rarity_reward = get_rarity_reward(card)
             collection_id = card["collection_id"]
             collection = get_collection(collection_id)
-            vault = collection.get("vault", collection_id.split("_")[0])
-            collection_name = collection.get("name", "Unknown Collection")
+            vault = collection.get(
+                "vault",
+                collection_id.split("_")[0],
+            )
+            collection_name = collection.get(
+                "name",
+                "Unknown Collection",
+            )
             series_name = get_series(collection_id)
             position_emote = POSITION_EMOTES[card_number]
 
@@ -454,18 +485,31 @@ class CardDropView(discord.ui.View):
                 continue
 
             claimant = item.claimant
-            quantity, was_new = add_to_bag(claimant.id, card["id"])
+            quantity, was_new = add_to_bag(
+                claimant.id,
+                card["id"],
+            )
             add_glimmers(claimant.id, rarity_reward)
 
-            record_weekly_progress(claimant.id, "drops_claimed", 1)
+            record_weekly_progress(
+                claimant.id,
+                "drops_claimed",
+                1,
+            )
             if was_new:
-                record_weekly_progress(claimant.id, "new_cards", 1)
+                record_weekly_progress(
+                    claimant.id,
+                    "new_cards",
+                    1,
+                )
 
             status = (
                 "You got a new card!"
                 if was_new
-                else f"You now have **{quantity}** copies!\n"
-                     "You got a dupie! You can either: `/sell` or `/merge`"
+                else (
+                    f"You now have **{quantity}** copies!\n"
+                    "You got a dupie! You can either: `/sell` or `/merge`"
+                )
             )
 
             total_reward = rarity_reward
@@ -485,7 +529,8 @@ class CardDropView(discord.ui.View):
 
             view_line = (
                 f"[View]({image_url}) {claimant.mention}"
-                if image_url else claimant.mention
+                if image_url
+                else claimant.mention
             )
 
             result_lines.append(
@@ -505,7 +550,10 @@ class CardDropView(discord.ui.View):
         )
 
         await self.message.reply(
-            embed=discord.Embed(description=result_text, color=CABINET_COLOR)
+            embed=discord.Embed(
+                description=result_text,
+                color=CABINET_COLOR,
+            )
         )
 
 
@@ -525,7 +573,9 @@ class Drop(commands.Cog):
         if cabinet is None:
             await interaction.response.send_message(
                 embed=discord.Embed(
-                    description="The Magic Cabinet setup is currently unavailable.",
+                    description=(
+                        "The Magic Cabinet setup is currently unavailable."
+                    ),
                     color=CABINET_COLOR,
                 )
             )
@@ -534,7 +584,9 @@ class Drop(commands.Cog):
         if interaction.guild_id is None or interaction.guild is None:
             await interaction.response.send_message(
                 embed=discord.Embed(
-                    description="This command can only be used inside a server.",
+                    description=(
+                        "This command can only be used inside a server."
+                    ),
                     color=CABINET_COLOR,
                 )
             )
@@ -547,14 +599,18 @@ class Drop(commands.Cog):
 
         if not allowed:
             channel_mentions = []
-            for channel_id in get_saved_drop_channels(interaction.guild_id):
+
+            for channel_id in get_saved_drop_channels(
+                interaction.guild_id
+            ):
                 channel = interaction.guild.get_channel(channel_id)
                 if channel is not None:
                     channel_mentions.append(channel.mention)
 
             channel_text = (
                 " • ".join(channel_mentions)
-                if channel_mentions else "No configured Drop channels."
+                if channel_mentions
+                else "No configured Drop channels."
             )
 
             await interaction.response.send_message(
@@ -586,12 +642,19 @@ class Drop(commands.Cog):
         cards = choose_drop_cards()
 
         card_information = "\n\n".join(
-            format_card(card, interaction.user.id, position)
+            format_card(
+                card,
+                interaction.user.id,
+                position,
+            )
             for position, card in enumerate(cards, start=1)
         )
 
         card_strip = await create_card_strip(cards)
-        file = discord.File(card_strip, filename="cabinet_drop.png")
+        file = discord.File(
+            card_strip,
+            filename="cabinet_drop.png",
+        )
 
         embed = discord.Embed(
             description=(
@@ -610,7 +673,9 @@ class Drop(commands.Cog):
 
         view = CardDropView(cards, interaction.user.id)
         message = await interaction.followup.send(
-            content=f"**Oh {interaction.user.mention} is dropping! Attention!**",
+            content=(
+                f"**Oh {interaction.user.mention} is dropping! Attention!**"
+            ),
             embed=embed,
             file=file,
             view=view,
