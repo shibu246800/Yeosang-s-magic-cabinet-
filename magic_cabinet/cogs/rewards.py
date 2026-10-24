@@ -54,7 +54,7 @@ def initialize_rewards_database():
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS blind_boxes (
-                user_id BIGINT PRIMARY KEY,
+                user_id INTEGER PRIMARY KEY,
                 quantity INTEGER NOT NULL DEFAULT 0
             )
             """
@@ -71,7 +71,7 @@ def get_pending_rewards(user_id: int):
                 amount,
                 task_id
             FROM weekly_pending_rewards
-            WHERE user_id = %s
+            WHERE user_id = ?
             AND claimed = 0
             ORDER BY reward_id ASC
             """,
@@ -85,7 +85,7 @@ def get_blind_box_count(user_id: int) -> int:
             """
             SELECT quantity
             FROM blind_boxes
-            WHERE user_id = %s
+            WHERE user_id = ?
             """,
             (user_id,),
         ).fetchone()
@@ -98,10 +98,10 @@ def add_blind_boxes(user_id: int, amount: int):
         connection.execute(
             """
             INSERT INTO blind_boxes (user_id, quantity)
-            VALUES (%s, %s)
-            ON CONFLICT (user_id)
+            VALUES (?, ?)
+            ON CONFLICT(user_id)
             DO UPDATE SET
-                quantity = blind_boxes.quantity + EXCLUDED.quantity
+                quantity = blind_boxes.quantity + excluded.quantity
             """,
             (user_id, amount),
         )
@@ -109,28 +109,17 @@ def add_blind_boxes(user_id: int, amount: int):
 
 def remove_blind_box(user_id: int) -> bool:
     with get_connection() as connection:
-        row = connection.execute(
-            """
-            SELECT quantity
-            FROM blind_boxes
-            WHERE user_id = %s
-            """,
-            (user_id,),
-        ).fetchone()
-
-        if row is None or row["quantity"] <= 0:
-            return False
-
-        connection.execute(
+        cursor = connection.execute(
             """
             UPDATE blind_boxes
             SET quantity = quantity - 1
-            WHERE user_id = %s
+            WHERE user_id = ?
+            AND quantity > 0
             """,
             (user_id,),
         )
 
-    return True
+        return cursor.rowcount > 0
 
 
 def get_bag_quantity(user_id: int, card_id: int) -> int:
@@ -139,8 +128,8 @@ def get_bag_quantity(user_id: int, card_id: int) -> int:
             """
             SELECT quantity
             FROM bag
-            WHERE user_id = %s
-            AND card_id = %s
+            WHERE user_id = ?
+            AND card_id = ?
             """,
             (user_id, card_id),
         ).fetchone()
@@ -150,39 +139,27 @@ def get_bag_quantity(user_id: int, card_id: int) -> int:
 
 def add_to_bag(user_id: int, card_id: int):
     with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO bag (user_id, card_id, quantity)
+            VALUES (?, ?, 1)
+            ON CONFLICT(user_id, card_id)
+            DO UPDATE SET quantity = bag.quantity + 1
+            """,
+            (user_id, card_id),
+        )
+
         row = connection.execute(
             """
             SELECT quantity
             FROM bag
-            WHERE user_id = %s
-            AND card_id = %s
+            WHERE user_id = ?
+            AND card_id = ?
             """,
             (user_id, card_id),
         ).fetchone()
 
-        if row is None:
-            connection.execute(
-                """
-                INSERT INTO bag (user_id, card_id, quantity)
-                VALUES (%s, %s, 1)
-                """,
-                (user_id, card_id),
-            )
-            return 1, True
-
-        quantity = row["quantity"] + 1
-
-        connection.execute(
-            """
-            UPDATE bag
-            SET quantity = %s
-            WHERE user_id = %s
-            AND card_id = %s
-            """,
-            (quantity, user_id, card_id),
-        )
-
-        return quantity, False
+    return row["quantity"], row["quantity"] == 1
 
 
 def add_glimmers(user_id: int, amount: int):
@@ -190,10 +167,10 @@ def add_glimmers(user_id: int, amount: int):
         connection.execute(
             """
             INSERT INTO balances (user_id, glimmers)
-            VALUES (%s, %s)
-            ON CONFLICT (user_id)
+            VALUES (?, ?)
+            ON CONFLICT(user_id)
             DO UPDATE SET
-                glimmers = balances.glimmers + EXCLUDED.glimmers
+                glimmers = balances.glimmers + excluded.glimmers
             """,
             (user_id, amount),
         )
@@ -338,7 +315,7 @@ def claim_rewards(user_id: int):
     reward_ids = [reward["reward_id"] for reward in pending]
 
     if reward_ids:
-        placeholders = ", ".join("%s" for _ in reward_ids)
+        placeholders = ", ".join("?" for _ in reward_ids)
 
         with get_connection() as connection:
             connection.execute(
