@@ -1,3 +1,4 @@
+
 """Magic Cabinet weekly challenges."""
 
 import json
@@ -169,7 +170,7 @@ def initialize_weekly_database():
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS weekly_challenges (
-                user_id BIGINT PRIMARY KEY,
+                user_id INTEGER PRIMARY KEY,
                 week_started TEXT NOT NULL,
                 task_data TEXT NOT NULL,
                 guaranteed_claimed INTEGER NOT NULL DEFAULT 0,
@@ -181,10 +182,10 @@ def initialize_weekly_database():
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS weekly_progress (
-                user_id BIGINT NOT NULL,
+                user_id INTEGER NOT NULL,
                 task_id TEXT NOT NULL,
                 progress INTEGER NOT NULL DEFAULT 0,
-                completed BOOLEAN NOT NULL DEFAULT FALSE,
+                completed INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (user_id, task_id)
             )
             """
@@ -195,18 +196,15 @@ def initialize_weekly_database():
 # GLIMMERS
 # ---------------------------------------------------------
 
-def add_glimmers(
-    user_id: int,
-    amount: int,
-):
+def add_glimmers(user_id: int, amount: int):
     with get_connection() as connection:
         connection.execute(
             """
             INSERT INTO balances (user_id, glimmers)
-            VALUES (%s, %s)
-            ON CONFLICT (user_id)
+            VALUES (?, ?)
+            ON CONFLICT(user_id)
             DO UPDATE SET
-                glimmers = balances.glimmers + EXCLUDED.glimmers
+                glimmers = balances.glimmers + excluded.glimmers
             """,
             (user_id, amount),
         )
@@ -287,7 +285,7 @@ def get_weekly_data(user_id: int):
                 guaranteed_claimed,
                 reward_claimed
             FROM weekly_challenges
-            WHERE user_id = %s
+            WHERE user_id = ?
             """,
             (user_id,),
         ).fetchone()
@@ -295,27 +293,23 @@ def get_weekly_data(user_id: int):
 
 def is_new_week(week_started: str) -> bool:
     started = datetime.fromisoformat(week_started)
-
     now = datetime.now(timezone.utc)
 
     if started.tzinfo is None:
         started = started.replace(tzinfo=timezone.utc)
 
-    return now >= started + timedelta(
-        days=WEEKLY_RESET_DAYS
-    )
+    return now >= started + timedelta(days=WEEKLY_RESET_DAYS)
 
 
 def create_new_week(user_id: int):
     selected_tasks = generate_tasks()
-
     now = datetime.now(timezone.utc).isoformat()
 
     with get_connection() as connection:
         connection.execute(
             """
             DELETE FROM weekly_progress
-            WHERE user_id = %s
+            WHERE user_id = ?
             """,
             (user_id,),
         )
@@ -329,11 +323,11 @@ def create_new_week(user_id: int):
                 guaranteed_claimed,
                 reward_claimed
             )
-            VALUES (%s, %s, %s, 1, 0)
-            ON CONFLICT (user_id)
+            VALUES (?, ?, ?, 1, 0)
+            ON CONFLICT(user_id)
             DO UPDATE SET
-                week_started = EXCLUDED.week_started,
-                task_data = EXCLUDED.task_data,
+                week_started = excluded.week_started,
+                task_data = excluded.task_data,
                 guaranteed_claimed = 1,
                 reward_claimed = 0
             """,
@@ -353,7 +347,7 @@ def create_new_week(user_id: int):
                     progress,
                     completed
                 )
-                VALUES (%s, %s, 0, FALSE)
+                VALUES (?, ?, 0, 0)
                 """,
                 (user_id, task["id"]),
             )
@@ -377,17 +371,14 @@ def get_current_tasks(user_id: int):
 # PROGRESS
 # ---------------------------------------------------------
 
-def get_task_progress(
-    user_id: int,
-    task_id: str,
-) -> int:
+def get_task_progress(user_id: int, task_id: str) -> int:
     with get_connection() as connection:
         row = connection.execute(
             """
             SELECT progress
             FROM weekly_progress
-            WHERE user_id = %s
-            AND task_id = %s
+            WHERE user_id = ?
+            AND task_id = ?
             """,
             (user_id, task_id),
         ).fetchone()
@@ -395,17 +386,14 @@ def get_task_progress(
     return 0 if row is None else row["progress"]
 
 
-def is_task_completed(
-    user_id: int,
-    task_id: str,
-) -> bool:
+def is_task_completed(user_id: int, task_id: str) -> bool:
     with get_connection() as connection:
         row = connection.execute(
             """
             SELECT completed
             FROM weekly_progress
-            WHERE user_id = %s
-            AND task_id = %s
+            WHERE user_id = ?
+            AND task_id = ?
             """,
             (user_id, task_id),
         ).fetchone()
@@ -419,8 +407,8 @@ def completed_task_count(user_id: int) -> int:
             """
             SELECT COUNT(*) AS total
             FROM weekly_progress
-            WHERE user_id = %s
-            AND completed = TRUE
+            WHERE user_id = ?
+            AND completed = 1
             """,
             (user_id,),
         ).fetchone()
@@ -455,11 +443,7 @@ def build_weekly_embed(
     )
 
     for index, task in enumerate(selected_tasks, start=1):
-        progress = get_task_progress(
-            user_id,
-            task["id"],
-        )
-
+        progress = get_task_progress(user_id, task["id"])
         progress = min(progress, task["amount"])
 
         marker = (
@@ -498,9 +482,7 @@ def build_weekly_embed(
 class Weekly(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-
         initialize_weekly_database()
-
         self.notification_loop.start()
 
     def cog_unload(self):
@@ -516,7 +498,6 @@ class Weekly(commands.Cog):
             guild_id,
             channel_id,
         ) in notifications:
-
             guild = self.bot.get_guild(guild_id)
 
             if guild is None:
@@ -615,7 +596,6 @@ class Weekly(commands.Cog):
         interaction: discord.Interaction,
     ):
         user_id = interaction.user.id
-
         existing = get_weekly_data(user_id)
 
         if (
