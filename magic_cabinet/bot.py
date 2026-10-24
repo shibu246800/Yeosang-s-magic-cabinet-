@@ -172,8 +172,8 @@ class MagicCabinetBot(commands.Bot):
             "magic_cabinet.cogs.test",
             "magic_cabinet.cogs.bag",
             "magic_cabinet.cogs.collection",
-            "magic_cabinet.cogs.wild"
-            "magic_cabinet.cogs.album"
+            "magic_cabinet.cogs.wild",
+            "magic_cabinet.cogs.album",
             ]
 
         for extension in extensions:
