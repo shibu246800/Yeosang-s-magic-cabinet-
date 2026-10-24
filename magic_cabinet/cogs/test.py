@@ -1,12 +1,13 @@
+
 """Moderator-only Magic Cabinet testing commands."""
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from magic_cabinet.cogs.rewards import (
-    add_blind_boxes,
-)
+from magic_cabinet.cogs.rewards import add_blind_boxes
+from magic_cabinet.database import initialize_database
+
 
 MODERATOR_IDS = {
     986907099617452032,
@@ -22,11 +23,9 @@ def is_moderator(user_id: int) -> bool:
 class Test(commands.GroupCog, name="test"):
     """Moderator-only testing commands."""
 
-    def __init__(
-        self,
-        bot: commands.Bot,
-    ):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
+        initialize_database()
 
     async def interaction_check(
         self,
@@ -53,10 +52,7 @@ class Test(commands.GroupCog, name="test"):
         self,
         interaction: discord.Interaction,
     ):
-        add_blind_boxes(
-            interaction.user.id,
-            1,
-        )
+        add_blind_boxes(interaction.user.id, 1)
 
         await interaction.response.send_message(
             embed=discord.Embed(
@@ -71,9 +67,5 @@ class Test(commands.GroupCog, name="test"):
         )
 
 
-async def setup(
-    bot: commands.Bot,
-):
-    await bot.add_cog(
-        Test(bot)
-      )
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Test(bot))
