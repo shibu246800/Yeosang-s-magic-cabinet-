@@ -26,7 +26,7 @@ def get_glimmers(user_id: int) -> int:
             """
             SELECT glimmers
             FROM balances
-            WHERE user_id = %s
+            WHERE user_id = ?
             """,
             (user_id,),
         ).fetchone()
