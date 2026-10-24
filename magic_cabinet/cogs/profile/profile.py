@@ -8,16 +8,11 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from magic_cabinet.database import get_connection
 from magic_cabinet.data.collections import COLLECTIONS
-from magic_cabinet.data.epic import CARDS as EPIC_CARDS
-from magic_cabinet.data.limited import CARDS as LIMITED_CARDS
-from magic_cabinet.data.normal import CARDS as NORMAL_CARDS
-from magic_cabinet.data.rare import CARDS as RARE_CARDS
-from magic_cabinet.data.legendary import CARDS as LEGENDARY_CARDS
 
 
 EMBED_COLOR = discord.Color.from_str("#4E0017")
+DATABASE = Path(__file__).resolve().parents[2] / "cabinet.db"
 
 HEADER_URL = (
     "https://raw.githubusercontent.com/"
@@ -46,25 +41,14 @@ PROFILE_EMOTES = {
 
 VAULT_ORDER = ["BB", "GG", "BG"]
 
-ALL_BASE_CARDS = (
-    NORMAL_CARDS
-    + RARE_CARDS
-    + EPIC_CARDS
-    + LIMITED_CARDS
-)
-
 
 def get_connection():
-    """Use the same database as the other Cabinet commands."""
-    connection = sqlite3.connect(
-        str(Path(__file__).resolve().parents[2] / "cabinet.db")
-    )
+    connection = sqlite3.connect(str(DATABASE))
     connection.row_factory = sqlite3.Row
     return connection
 
 
 def initialize_profile_database():
-    """Create profile and Legendary ownership tables."""
     with get_connection() as connection:
         connection.execute(
             """
@@ -102,6 +86,18 @@ def initialize_profile_database():
             """
         )
 
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS collection_rewards (
+                user_id INTEGER NOT NULL,
+                collection_id TEXT NOT NULL,
+                claimed INTEGER NOT NULL DEFAULT 0,
+                claimed_at TEXT,
+                PRIMARY KEY (user_id, collection_id)
+            )
+            """
+        )
+
 
 def get_player_vaults(user_id: int) -> list[str]:
     with get_connection() as connection:
@@ -124,17 +120,18 @@ def get_glimmers(user_id: int) -> int:
     return int(row["glimmers"]) if row else 0
 
 
-def get_bag_cards(user_id: int) -> set[int]:
+def get_completed_collections(user_id: int) -> int:
     with get_connection() as connection:
-        rows = connection.execute(
+        row = connection.execute(
             """
-            SELECT card_id FROM bag
-            WHERE user_id = ? AND quantity > 0
+            SELECT COUNT(*)
+            FROM collection_rewards
+            WHERE user_id = ? AND claimed = 1
             """,
             (user_id,),
-        ).fetchall()
+        ).fetchone()
 
-    return {int(row["card_id"]) for row in rows}
+    return int(row[0]) if row else 0
 
 
 def get_player_legendary(user_id: int) -> list[tuple[str, str]]:
@@ -153,21 +150,6 @@ def get_player_legendary(user_id: int) -> list[tuple[str, str]]:
         (row["collection_id"], row["legendary_id"])
         for row in rows
     ]
-
-
-def get_completed_collections(user_id: int) -> int:
-    """Count collections whose Legendary reward was claimed."""
-    with get_connection() as connection:
-        row = connection.execute(
-            """
-            SELECT COUNT(*)
-            FROM collection_rewards
-            WHERE user_id = ? AND claimed = 1
-            """,
-            (user_id,),
-        ).fetchone()
-
-    return int(row[0]) if row else 0
 
 
 def get_badges(user_id: int) -> list[tuple[str, str | None]]:
@@ -192,7 +174,7 @@ def get_top_achievements(user_id: int) -> list[tuple[str, int]]:
             SELECT achievement_name, global_rank
             FROM player_achievements
             WHERE user_id = ? AND global_rank <= 3
-            ORDER BY global_rank ASC
+            ORDER BY global_rank
             LIMIT 3
             """,
             (user_id,),
@@ -232,9 +214,9 @@ def build_profile_content(user: discord.User) -> discord.Embed:
     vaults = get_player_vaults(user.id)
     glimmers = get_glimmers(user.id)
     completed = get_completed_collections(user.id)
+    legendary = get_player_legendary(user.id)
     badges = get_badges(user.id)
     achievements = get_top_achievements(user.id)
-    legendary = get_player_legendary(user.id)
 
     description = (
         f"{PROFILE_EMOTES['username']} **Username**\n"
@@ -245,7 +227,7 @@ def build_profile_content(user: discord.User) -> discord.Embed:
         f"{glimmers:,} {GLIMMER_EMOTE}\n\n"
         f"{PROFILE_EMOTES['collections']} **Collections Completed**\n"
         f"**{completed}**\n\n"
-        f"✨ **Legendary Cards**\n"
+        "✨ **Legendary Cards**\n"
     )
 
     if legendary:
@@ -286,9 +268,7 @@ class Profile(commands.Cog):
         name="profile",
         description="View a Magic Cabinet identity card.",
     )
-    @app_commands.describe(
-        user="The player whose profile you want to view.",
-    )
+    @app_commands.describe(user="The player whose profile you want to view.")
     async def profile(
         self,
         interaction: discord.Interaction,
