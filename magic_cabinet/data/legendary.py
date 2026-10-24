@@ -4,7 +4,6 @@
 CARDS = [
     {
         "id": "BB_LEGENDARY_001",
-        "name": "Crimson Embrace",
         "rarity": "Legendary",
         "collection_id": "BB",
         "collection": "Velvet Moon",
