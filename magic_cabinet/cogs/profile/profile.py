@@ -1,20 +1,21 @@
+
 """Magic Cabinet profile command."""
 
 import sqlite3
+from pathlib import Path
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from magic_cabinet.database import get_connection
 from magic_cabinet.data.collections import COLLECTIONS
 from magic_cabinet.data.epic import CARDS as EPIC_CARDS
-from magic_cabinet.data.legendary import CARDS as LEGENDARY_CARDS
 from magic_cabinet.data.limited import CARDS as LIMITED_CARDS
 from magic_cabinet.data.normal import CARDS as NORMAL_CARDS
 from magic_cabinet.data.rare import CARDS as RARE_CARDS
+from magic_cabinet.data.legendary import CARDS as LEGENDARY_CARDS
 
-
-DATABASE = "cabinet.db"
 
 EMBED_COLOR = discord.Color.from_str("#4E0017")
 
@@ -45,26 +46,25 @@ PROFILE_EMOTES = {
 
 VAULT_ORDER = ["BB", "GG", "BG"]
 
-ALL_CARDS = (
+ALL_BASE_CARDS = (
     NORMAL_CARDS
     + RARE_CARDS
     + EPIC_CARDS
     + LIMITED_CARDS
-    + LEGENDARY_CARDS
 )
 
 
 def get_connection():
-    """Open a SQLite database connection."""
-
-    connection = sqlite3.connect(DATABASE)
+    """Use the same database as the other Cabinet commands."""
+    connection = sqlite3.connect(
+        str(Path(__file__).resolve().parents[2] / "cabinet.db")
+    )
     connection.row_factory = sqlite3.Row
     return connection
 
 
 def initialize_profile_database():
-    """Create profile-related SQLite tables."""
-
+    """Create profile and Legendary ownership tables."""
     with get_connection() as connection:
         connection.execute(
             """
@@ -90,122 +90,87 @@ def initialize_profile_database():
             """
         )
 
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS player_legendary (
+                user_id INTEGER NOT NULL,
+                collection_id TEXT NOT NULL,
+                legendary_id TEXT NOT NULL,
+                claimed_at TEXT,
+                PRIMARY KEY (user_id, collection_id)
+            )
+            """
+        )
+
 
 def get_player_vaults(user_id: int) -> list[str]:
-    """Return the player's selected Vaults."""
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT vault FROM player_vaults WHERE user_id = ?",
+            (user_id,),
+        ).fetchall()
 
+    selected = {row["vault"] for row in rows}
+    return [vault for vault in VAULT_ORDER if vault in selected]
+
+
+def get_glimmers(user_id: int) -> int:
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT glimmers FROM balances WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+
+    return int(row["glimmers"]) if row else 0
+
+
+def get_bag_cards(user_id: int) -> set[int]:
     with get_connection() as connection:
         rows = connection.execute(
             """
-            SELECT vault
-            FROM player_vaults
-            WHERE user_id = ?
+            SELECT card_id FROM bag
+            WHERE user_id = ? AND quantity > 0
             """,
             (user_id,),
         ).fetchall()
 
-    selected = {
-        row["vault"]
-        for row in rows
-        if row["vault"] in VAULT_ORDER
-    }
+    return {int(row["card_id"]) for row in rows}
+
+
+def get_player_legendary(user_id: int) -> list[tuple[str, str]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT collection_id, legendary_id
+            FROM player_legendary
+            WHERE user_id = ?
+            ORDER BY collection_id
+            """,
+            (user_id,),
+        ).fetchall()
 
     return [
-        vault
-        for vault in VAULT_ORDER
-        if vault in selected
+        (row["collection_id"], row["legendary_id"])
+        for row in rows
     ]
 
 
-def get_glimmers(user_id: int) -> int:
-    """Return the player's current Glimmer balance."""
-
+def get_completed_collections(user_id: int) -> int:
+    """Count collections whose Legendary reward was claimed."""
     with get_connection() as connection:
         row = connection.execute(
             """
-            SELECT glimmers
-            FROM balances
-            WHERE user_id = ?
+            SELECT COUNT(*)
+            FROM collection_rewards
+            WHERE user_id = ? AND claimed = 1
             """,
             (user_id,),
         ).fetchone()
 
-    if row is None:
-        return 0
-
-    return row["glimmers"]
-
-
-def get_bag_cards(user_id: int) -> set[int]:
-    """Return all card IDs currently owned by the player."""
-
-    with get_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT card_id
-            FROM bag
-            WHERE user_id = ?
-            AND quantity > 0
-            """,
-            (user_id,),
-        ).fetchall()
-
-    return {
-        row["card_id"]
-        for row in rows
-    }
-
-
-def get_completed_collections(user_id: int) -> int:
-    """Count fully completed collections."""
-
-    owned_cards = get_bag_cards(user_id)
-    completed = 0
-
-    for collection_id in COLLECTIONS:
-        collection_cards = [
-            card
-            for card in ALL_CARDS
-            if card["collection_id"] == collection_id
-        ]
-
-        if not collection_cards:
-            continue
-
-        base_cards = [
-            card
-            for card in collection_cards
-            if card["stars"] != "★★★★★"
-        ]
-
-        legendary_cards = [
-            card
-            for card in collection_cards
-            if card["stars"] == "★★★★★"
-        ]
-
-        base_complete = all(
-            card["id"] in owned_cards
-            for card in base_cards
-        )
-
-        legendary_complete = (
-            bool(legendary_cards)
-            and all(
-                card["id"] in owned_cards
-                for card in legendary_cards
-            )
-        )
-
-        if base_complete and legendary_complete:
-            completed += 1
-
-    return completed
+    return int(row[0]) if row else 0
 
 
 def get_badges(user_id: int) -> list[tuple[str, str | None]]:
-    """Return earned badges."""
-
     with get_connection() as connection:
         rows = connection.execute(
             """
@@ -217,22 +182,16 @@ def get_badges(user_id: int) -> list[tuple[str, str | None]]:
             (user_id,),
         ).fetchall()
 
-    return [
-        (row["badge_name"], row["badge_emote"])
-        for row in rows
-    ]
+    return [(row["badge_name"], row["badge_emote"]) for row in rows]
 
 
 def get_top_achievements(user_id: int) -> list[tuple[str, int]]:
-    """Return the player's global Top 3 achievements."""
-
     with get_connection() as connection:
         rows = connection.execute(
             """
             SELECT achievement_name, global_rank
             FROM player_achievements
-            WHERE user_id = ?
-            AND global_rank <= 3
+            WHERE user_id = ? AND global_rank <= 3
             ORDER BY global_rank ASC
             LIMIT 3
             """,
@@ -246,120 +205,79 @@ def get_top_achievements(user_id: int) -> list[tuple[str, int]]:
 
 
 def format_vaults(vaults: list[str]) -> str:
-    """Format selected Vaults."""
-
-    if not vaults:
-        return "None yet"
-
-    return " • ".join(
-        f"**{vault}**"
-        for vault in vaults
-    )
+    return " • ".join(f"**{vault}**" for vault in vaults) if vaults else "None yet"
 
 
-def format_badges(
-    badges: list[tuple[str, str | None]],
-) -> str:
-    """Format earned badges."""
-
+def format_badges(badges: list[tuple[str, str | None]]) -> str:
     if not badges:
         return "None yet"
 
-    lines = []
-
-    for badge_name, badge_emote in badges:
-        if badge_emote:
-            lines.append(
-                f"{badge_emote} **{badge_name}**"
-            )
-        else:
-            lines.append(
-                f"🏅 **{badge_name}**"
-            )
-
-    return "\n".join(lines)
+    return "\n".join(
+        f"{emote} **{name}**" if emote else f"🏅 **{name}**"
+        for name, emote in badges
+    )
 
 
-def format_achievements(
-    achievements: list[tuple[str, int]],
-) -> str:
-    """Format Top 3 global achievements."""
-
+def format_achievements(achievements: list[tuple[str, int]]) -> str:
     if not achievements:
         return "None yet"
 
-    lines = []
-
-    for achievement_name, rank in achievements:
-        lines.append(
-            f"**#{rank}** {achievement_name}"
-        )
-
-    return "\n".join(lines)
+    return "\n".join(
+        f"**#{rank}** {name}"
+        for name, rank in achievements
+    )
 
 
-def build_profile_content(
-    user: discord.User,
-) -> discord.Embed:
-    """Build the live profile content embed."""
-
+def build_profile_content(user: discord.User) -> discord.Embed:
     vaults = get_player_vaults(user.id)
     glimmers = get_glimmers(user.id)
-    completed_collections = get_completed_collections(user.id)
+    completed = get_completed_collections(user.id)
     badges = get_badges(user.id)
     achievements = get_top_achievements(user.id)
+    legendary = get_player_legendary(user.id)
 
     description = (
-        f"{PROFILE_EMOTES['username']} "
-        f"**Username**\n"
+        f"{PROFILE_EMOTES['username']} **Username**\n"
         f"{user.mention}\n\n"
-        f"{PROFILE_EMOTES['vaults']} "
-        f"**Vaults**\n"
+        f"{PROFILE_EMOTES['vaults']} **Vaults**\n"
         f"{format_vaults(vaults)}\n\n"
-        f"{PROFILE_EMOTES['glimmers']} "
-        f"**Glimmers**\n"
+        f"{PROFILE_EMOTES['glimmers']} **Glimmers**\n"
         f"{glimmers:,} {GLIMMER_EMOTE}\n\n"
-        f"{PROFILE_EMOTES['collections']} "
-        f"**Collections Completed**\n"
-        f"**{completed_collections}**"
+        f"{PROFILE_EMOTES['collections']} **Collections Completed**\n"
+        f"**{completed}**\n\n"
+        f"✨ **Legendary Cards**\n"
     )
+
+    if legendary:
+        description += "\n".join(
+            f"✦ **{card_id}** · `{collection_id}`"
+            for collection_id, card_id in legendary
+        )
+    else:
+        description += "None yet"
 
     if badges:
         description += (
-            "\n\n"
-            f"{PROFILE_EMOTES['badges']} "
-            f"**Badges**\n"
+            f"\n\n{PROFILE_EMOTES['badges']} **Badges**\n"
             f"{format_badges(badges)}"
         )
 
     if achievements:
         description += (
-            "\n\n"
-            f"{PROFILE_EMOTES['achievements']} "
-            f"**Global Achievements**\n"
+            f"\n\n{PROFILE_EMOTES['achievements']} **Global Achievements**\n"
             f"{format_achievements(achievements)}"
         )
 
-    embed = discord.Embed(
-        description=description,
-        color=EMBED_COLOR,
-    )
-
+    embed = discord.Embed(description=description, color=EMBED_COLOR)
     embed.set_author(
         name=f"{user.display_name}'s Profile",
         icon_url=user.display_avatar.url,
     )
-
-    embed.set_footer(
-        text="Yeosang's Magic Cabinet"
-    )
-
+    embed.set_footer(text="Yeosang's Magic Cabinet")
     return embed
 
 
 class Profile(commands.Cog):
-    """Magic Cabinet profile commands."""
-
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         initialize_profile_database()
@@ -376,28 +294,18 @@ class Profile(commands.Cog):
         interaction: discord.Interaction,
         user: discord.User | None = None,
     ):
-        """Show a player's live profile."""
-
         target = user or interaction.user
 
-        header_embed = discord.Embed(
-            color=EMBED_COLOR,
-        )
-        header_embed.set_image(url=HEADER_URL)
+        header = discord.Embed(color=EMBED_COLOR)
+        header.set_image(url=HEADER_URL)
 
-        profile_embed = build_profile_content(target)
+        profile = build_profile_content(target)
 
-        divider_embed = discord.Embed(
-            color=EMBED_COLOR,
-        )
-        divider_embed.set_image(url=DIVIDER_URL)
+        divider = discord.Embed(color=EMBED_COLOR)
+        divider.set_image(url=DIVIDER_URL)
 
         await interaction.response.send_message(
-            embeds=[
-                header_embed,
-                profile_embed,
-                divider_embed,
-            ]
+            embeds=[header, profile, divider]
         )
 
 
