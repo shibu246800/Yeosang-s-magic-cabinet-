@@ -1,6 +1,7 @@
 
 """Magic Cabinet merge command."""
 
+import asyncio
 import random
 
 import discord
@@ -50,7 +51,7 @@ CARD_DATA = {
 
 
 def merge_card(user_id: int, card_id: int):
-    """Merge three duplicate copies into one higher-rarity card."""
+    """Merge three duplicate copies into a higher-rarity card."""
 
     initialize_database()
 
@@ -62,28 +63,21 @@ def merge_card(user_id: int, card_id: int):
     rarity = card["stars"]
 
     if rarity not in MERGE_REWARDS:
-        return (
-            False,
-            "Limited cards cannot be merged.",
-            None,
-            0,
-        )
+        return False, "Limited cards cannot be merged.", None, 0
 
-    required_rarity = RARITY_ORDER[rarity] + 1
+    next_rarity = RARITY_ORDER[rarity] + 1
 
     eligible_cards = [
         candidate
         for candidate in ALL_CARDS
         if candidate["collection_id"] == card["collection_id"]
-        and RARITY_ORDER.get(candidate["stars"], 0)
-        == required_rarity
+        and RARITY_ORDER.get(candidate["stars"], 0) == next_rarity
     ]
 
     if not eligible_cards:
         return (
             False,
-            "There is no eligible higher-rarity card "
-            "in this collection.",
+            "No higher-rarity card is available in this collection.",
             None,
             0,
         )
@@ -100,12 +94,12 @@ def merge_card(user_id: int, card_id: int):
             (user_id, card_id),
         ).fetchone()
 
+        # Quantity includes the original copy.
         if row is None or row["quantity"] < 4:
             return (
                 False,
                 "You need at least **3 duplicate copies** "
-                "of this card in your Bag to merge it. "
-                "Your original copy will stay safe.",
+                "of this card in your Bag. Your original stays safe.",
                 None,
                 0,
             )
@@ -113,18 +107,19 @@ def merge_card(user_id: int, card_id: int):
         upgraded_card = random.choice(eligible_cards)
         upgraded_id = int(upgraded_card["id"])
 
-        # Consume exactly three duplicates.
+        # Remove three duplicates, never the original copy.
         connection.execute(
             """
             UPDATE bag
             SET quantity = quantity - 3
             WHERE user_id = ? AND card_id = ?
+              AND quantity >= 4
             """,
             (user_id, card_id),
         )
 
-        # Keep the original upgraded card if already owned.
-        # Otherwise, establish its first permanent copy.
+        # Add one copy of the upgraded card.
+        # If already owned, this becomes an additional duplicate.
         connection.execute(
             """
             INSERT INTO bag (user_id, card_id, quantity)
@@ -135,7 +130,6 @@ def merge_card(user_id: int, card_id: int):
             (user_id, upgraded_id),
         )
 
-        # Award Glimmers only after a successful merge.
         connection.execute(
             """
             INSERT INTO balances (user_id, glimmers)
@@ -161,16 +155,14 @@ class Merge(commands.Cog):
         description="Merge three duplicate cards into a higher rarity.",
     )
     @app_commands.describe(
-        card_id="The Card ID with at least three duplicates in your Bag."
+        card_id="Card ID with at least three duplicates in your Bag."
     )
     async def merge(
         self,
         interaction: discord.Interaction,
         card_id: int,
     ):
-        success, message, upgraded_card, reward = await __import__(
-            "asyncio"
-        ).to_thread(
+        success, message, upgraded_card, reward = await asyncio.to_thread(
             merge_card,
             interaction.user.id,
             card_id,
@@ -190,14 +182,12 @@ class Merge(commands.Cog):
         embed = discord.Embed(
             title="✧ THE MERGE IS COMPLETE ✧",
             description=(
-                f"Your three duplicate copies of "
-                f"**Card #{card_id}** have merged.\n\n"
+                f"Three duplicate copies of **Card #{card_id}** "
+                f"have been merged.\n\n"
                 f"✦ **New Card:** #{upgraded_card['id']}\n"
                 f"✦ **Rarity:** {upgraded_card['stars']}\n"
-                f"✦ **Collection:** "
-                f"{upgraded_card['collection_id']}\n\n"
-                f"{GLIMMER_EMOTE} **Reward:** "
-                f"{reward} Glimmers"
+                f"✦ **Collection:** {upgraded_card['collection_id']}\n\n"
+                f"{GLIMMER_EMOTE} **Reward:** {reward} Glimmers"
             ),
             color=EMBED_COLOR,
         )
