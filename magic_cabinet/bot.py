@@ -14,6 +14,9 @@ from magic_cabinet.database import (
     get_connection,
     initialize_database,
 )
+from magic_cabinet.postgres_database import (
+    initialize_postgres_database,
+)
 
 
 load_dotenv()
@@ -39,10 +42,7 @@ def health_check():
 
 def run_health_server():
     port = int(os.getenv("PORT", 10000))
-    app.run(
-        host="0.0.0.0",
-        port=port,
-    )
+    app.run(host="0.0.0.0", port=port)
 
 
 threading.Thread(
@@ -63,7 +63,7 @@ async def test_prisma_connection():
 
     if not database_url:
         print("[PRISMA TEST] DATABASE_URL is missing.")
-        return
+        return False
 
     def check_connection():
         with psycopg.connect(
@@ -79,11 +79,14 @@ async def test_prisma_connection():
 
         if result == 1:
             print("[PRISMA TEST] CONNECTION SUCCESSFUL!")
+            return True
 
     except Exception as error:
         print(
             f"[PRISMA TEST] FAILED: {type(error).__name__}"
         )
+
+    return False
 
 
 # ---------------------------------------------------------
@@ -107,11 +110,9 @@ class CabinetCommandTree(app_commands.CommandTree):
             command.name,
         )
 
-        # Setup must remain available before the Cabinet is configured.
         if command_name == "cabinet setup":
             return True
 
-        # All other commands require a server.
         if interaction.guild_id is None:
             await interaction.response.send_message(
                 "🔒 The Magic Cabinet must be used inside a server.",
@@ -139,7 +140,6 @@ class CabinetCommandTree(app_commands.CommandTree):
                     )
                     return False
 
-                # Awakening is the next permitted step.
                 if command_name == "magic awaken":
                     return True
 
@@ -190,12 +190,31 @@ class MagicCabinetBot(commands.Bot):
     async def setup_hook(self):
         print("=== SETUP HOOK STARTED ===")
 
-        # Keep the existing SQLite database active.
+        # Preserve the existing SQLite database.
         initialize_database()
         print("[SQLITE] Database initialized.")
 
-        # Test Prisma without migrating or changing player data.
-        await test_prisma_connection()
+        # Initialize PostgreSQL without migrating any cards.
+        connected = await test_prisma_connection()
+
+        if connected:
+            try:
+                await asyncio.to_thread(
+                    initialize_postgres_database
+                )
+                print(
+                    "[POSTGRESQL] Inventory table initialized."
+                )
+            except Exception as error:
+                print(
+                    "[POSTGRESQL] Initialization failed: "
+                    f"{type(error).__name__}: {error}"
+                )
+        else:
+            print(
+                "[POSTGRESQL] Skipped initialization. "
+                "Existing SQLite data remains active."
+            )
 
         extensions = [
             "magic_cabinet.cogs.cabinet",
