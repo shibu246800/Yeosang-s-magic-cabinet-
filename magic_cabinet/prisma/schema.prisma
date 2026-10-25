@@ -1,4 +1,3 @@
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -9,93 +8,186 @@ datasource db {
 }
 
 model DropChannel {
-  guildId    BigInt @id @map("guild_id")
-  channel1Id BigInt @map("channel1_id")
-  channel2Id BigInt? @map("channel2_id")
-  channel3Id BigInt? @map("channel3_id")
-  channel4Id BigInt? @map("channel4_id")
-  channel5Id BigInt? @map("channel5_id")
+  guild_id   BigInt @id
+  channel1_id BigInt
+  channel2_id BigInt?
+  channel3_id BigInt?
+  channel4_id BigInt?
+  channel5_id BigInt?
 
   @@map("drop_channels")
 }
 
 model Player {
-  userId    BigInt  @id @map("user_id")
-  createdAt String  @map("created_at")
-  vault     String?
+  user_id    BigInt @id
+  created_at String
+  vault      String?
 
   @@map("players")
 }
 
 model PlayerVault {
-  userId BigInt @map("user_id")
-  vault  String
+  user_id BigInt
+  vault   String
 
-  @@id([userId, vault])
+  @@id([user_id, vault])
   @@map("player_vaults")
 }
 
 model Balance {
-  userId   BigInt @id @map("user_id")
-  glimmers Int    @default(0)
+  user_id  BigInt @id
+  glimmers BigInt @default(0)
 
   @@map("balances")
 }
 
 model Bag {
-  userId   BigInt @map("user_id")
-  cardId   BigInt @map("card_id")
+  user_id  BigInt
+  card_id  BigInt
   quantity Int    @default(0)
 
-  @@id([userId, cardId])
+  @@id([user_id, card_id])
   @@map("bag")
 }
 
 model DailyData {
-  userId     BigInt  @id @map("user_id")
-  lastClaimAt String? @map("last_claim_at")
+  user_id       BigInt @id
+  last_claim_at String?
 
   @@map("daily_data")
 }
 
 model BoosterTicket {
-  ticketId      Int     @id @default(autoincrement()) @map("ticket_id")
-  userId        BigInt  @map("user_id")
-  boosterId     String  @map("booster_id")
-  receivedAt    String  @map("received_at")
-  activatedAt   String? @map("activated_at")
-  expiresAt     String? @map("expires_at")
-  usesRemaining Int?    @map("uses_remaining")
-  source        String  @default("daily")
+  ticket_id      BigInt @id @default(autoincrement())
+  user_id        BigInt
+  booster_id     String
+  received_at    String
+  activated_at   String?
+  expires_at     String?
+  uses_remaining Int?
+  source         String @default("daily")
 
   @@map("booster_tickets")
 }
 
 model PlayerBadge {
-  userId    BigInt  @map("user_id")
-  badgeId   String  @map("badge_id")
-  badgeName String  @map("badge_name")
-  badgeEmote String? @map("badge_emote")
+  user_id     BigInt
+  badge_id    String
+  badge_name  String
+  badge_emote String?
 
-  @@id([userId, badgeId])
+  @@id([user_id, badge_id])
   @@map("player_badges")
 }
 
 model PlayerAchievement {
-  userId         BigInt @map("user_id")
-  achievementId  String @map("achievement_id")
-  achievementName String @map("achievement_name")
-  globalRank     Int    @map("global_rank")
+  user_id         BigInt
+  achievement_id  String
+  achievement_name String
+  global_rank     Int
 
-  @@id([userId, achievementId])
+  @@id([user_id, achievement_id])
   @@map("player_achievements")
 }
 
 model PlayerCardInventory {
-  userId   BigInt @map("user_id")
-  cardId   BigInt @map("card_id")
+  user_id  BigInt
+  card_id  BigInt
   quantity Int    @default(1)
 
-  @@id([userId, cardId])
+  @@id([user_id, card_id])
   @@map("player_card_inventory")
+}
+
+model WeeklyChallenge {
+  user_id             BigInt @id
+  week_started        String
+  task_data           String
+  guaranteed_claimed  Int    @default(0)
+  reward_claimed      Int    @default(0)
+
+  @@map("weekly_challenges")
+}
+
+model WeeklyProgress {
+  user_id   BigInt
+  task_id   String
+  progress  Int    @default(0)
+  completed Int    @default(0)
+
+  @@id([user_id, task_id])
+  @@map("weekly_progress")
+}
+
+model WeeklyNotification {
+  id         BigInt @id @default(autoincrement())
+  user_id    BigInt
+  task_id    String
+  created_at String
+  sent       Int    @default(0)
+
+  @@map("weekly_notifications")
+}
+
+model WeeklyDelivery {
+  user_id    BigInt @id
+  guild_id   BigInt
+  channel_id BigInt
+
+  @@map("weekly_delivery")
+}
+
+model WeeklyPendingReward {
+  reward_id  BigInt @id @default(autoincrement())
+  user_id    BigInt
+  reward_type String
+  amount     BigInt @default(0)
+  task_id    String?
+  claimed    Int    @default(0)
+  created_at String
+
+  @@map("weekly_pending_rewards")
+}
+
+model EarnData {
+  user_id       BigInt @id
+  last_claim_at String?
+
+  @@map("earn_data")
+}
+
+model BlindBox {
+  user_id  BigInt @id
+  quantity Int    @default(0)
+
+  @@map("blind_boxes")
+}
+
+model CollectionReward {
+  user_id      BigInt
+  collection_id String
+  claimed      Int     @default(0)
+  claimed_at   String?
+
+  @@id([user_id, collection_id])
+  @@map("collection_rewards")
+}
+
+model PlayerLegendary {
+  user_id      BigInt
+  collection_id String
+  legendary_id String
+  claimed_at   String?
+
+  @@id([user_id, collection_id])
+  @@map("player_legendary")
+}
+
+model BoosterActivationLog {
+  id           BigInt @id @default(autoincrement())
+  user_id      BigInt
+  ticket_id    BigInt?
+  activated_at String?
+
+  @@map("booster_activation_log")
 }
