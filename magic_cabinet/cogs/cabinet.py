@@ -1,22 +1,33 @@
 
+import os
+
 import discord
+import psycopg
+from psycopg.rows import dict_row
 from discord import app_commands
 from discord.ext import commands
 
-from magic_cabinet.database import (
-    get_connection,
-    initialize_database,
-)
-
 
 EMBED_COLOR = discord.Color.from_str("#4E0017")
+
+
+def get_postgres_connection():
+    database_url = os.getenv("DATABASE_URL")
+
+    if not database_url:
+        raise RuntimeError("DATABASE_URL is not configured.")
+
+    return psycopg.connect(
+        database_url,
+        connect_timeout=10,
+        row_factory=dict_row,
+    )
 
 
 class Cabinet(commands.GroupCog, name="cabinet"):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        initialize_database()
 
     @app_commands.command(
         name="setup",
@@ -67,31 +78,38 @@ class Cabinet(commands.GroupCog, name="cabinet"):
         while len(channel_ids) < 5:
             channel_ids.append(None)
 
-        with get_connection() as connection:
-            connection.execute(
-                """
-                INSERT INTO drop_channels (
-                    guild_id,
-                    channel1_id,
-                    channel2_id,
-                    channel3_id,
-                    channel4_id,
-                    channel5_id
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(guild_id)
-                DO UPDATE SET
-                    channel1_id = excluded.channel1_id,
-                    channel2_id = excluded.channel2_id,
-                    channel3_id = excluded.channel3_id,
-                    channel4_id = excluded.channel4_id,
-                    channel5_id = excluded.channel5_id
-                """,
-                (
-                    interaction.guild_id,
-                    *channel_ids,
-                ),
+        try:
+            with get_postgres_connection() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        INSERT INTO drop_channels (
+                            guild_id,
+                            channel1_id,
+                            channel2_id,
+                            channel3_id,
+                            channel4_id,
+                            channel5_id
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (guild_id)
+                        DO UPDATE SET
+                            channel1_id = EXCLUDED.channel1_id,
+                            channel2_id = EXCLUDED.channel2_id,
+                            channel3_id = EXCLUDED.channel3_id,
+                            channel4_id = EXCLUDED.channel4_id,
+                            channel5_id = EXCLUDED.channel5_id
+                        """,
+                        (interaction.guild_id, *channel_ids),
+                    )
+
+        except Exception as error:
+            print(f"[CABINET SETUP] PostgreSQL error: {error}")
+            await interaction.response.send_message(
+                "The Cabinet couldn't save your channels. Please try again later.",
+                ephemeral=True,
             )
+            return
 
         channel_list = "\n".join(
             f"• {channel.mention}"
@@ -117,20 +135,22 @@ class Cabinet(commands.GroupCog, name="cabinet"):
         guild_id: int,
         channel_id: int,
     ) -> bool:
-        with get_connection() as connection:
-            result = connection.execute(
-                """
-                SELECT
-                    channel1_id,
-                    channel2_id,
-                    channel3_id,
-                    channel4_id,
-                    channel5_id
-                FROM drop_channels
-                WHERE guild_id = ?
-                """,
-                (guild_id,),
-            ).fetchone()
+        with get_postgres_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        channel1_id,
+                        channel2_id,
+                        channel3_id,
+                        channel4_id,
+                        channel5_id
+                    FROM drop_channels
+                    WHERE guild_id = %s
+                    """,
+                    (guild_id,),
+                )
+                result = cursor.fetchone()
 
         if result is None:
             return False
