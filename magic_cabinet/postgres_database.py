@@ -38,9 +38,7 @@ def initialize_postgres_database():
 
 
 def migrate_inventory():
-    """Copy SQLite inventory into PostgreSQL without overwriting
-    existing PostgreSQL inventory records.
-    """
+    """Copy SQLite inventory into PostgreSQL safely."""
 
     with get_connection() as sqlite_connection:
         rows = sqlite_connection.execute("""
@@ -50,12 +48,28 @@ def migrate_inventory():
         """).fetchall()
 
         inventory = [
-            (int(row["user_id"]), int(row["card_id"]), int(row["quantity"]))
+            (
+                int(row["user_id"]),
+                int(row["card_id"]),
+                int(row["quantity"]),
+            )
             for row in rows
         ]
 
     with get_postgres_connection() as postgres_connection:
         with postgres_connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM player_card_inventory
+            """)
+            existing_count = cursor.fetchone()[0]
+
+            if existing_count > 0:
+                raise RuntimeError(
+                    "Migration stopped: PostgreSQL inventory is not empty. "
+                    "No inventory records were changed."
+                )
+
             cursor.executemany("""
                 INSERT INTO player_card_inventory
                     (user_id, card_id, quantity)
@@ -64,6 +78,6 @@ def migrate_inventory():
             """, inventory)
 
     print(
-        f"[INVENTORY MIGRATION] Processed {len(inventory)} "
+        f"[INVENTORY MIGRATION] Copied {len(inventory)} "
         "SQLite inventory records."
     )
