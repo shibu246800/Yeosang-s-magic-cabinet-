@@ -9,7 +9,6 @@ from magic_cabinet.cogs import merge
 
 
 class TestMagicCabinetMerge(unittest.TestCase):
-
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "test_cabinet.db"
@@ -20,6 +19,13 @@ class TestMagicCabinetMerge(unittest.TestCase):
             self.db_path,
         )
         self.path_patch.start()
+
+        self.merge_path_patch = patch.object(
+            merge,
+            "initialize_database",
+            database.initialize_database,
+        )
+        self.merge_path_patch.start()
 
         database.initialize_database()
 
@@ -33,6 +39,7 @@ class TestMagicCabinetMerge(unittest.TestCase):
             )
 
     def tearDown(self):
+        self.merge_path_patch.stop()
         self.path_patch.stop()
         self.temp_dir.cleanup()
 
@@ -42,10 +49,7 @@ class TestMagicCabinetMerge(unittest.TestCase):
             "choice",
             return_value=merge.CARD_DATA[3],
         ):
-            success, message, upgraded, reward = merge.merge_card(
-                12345,
-                1,
-            )
+            success, _, upgraded, reward = merge.merge_card(12345, 1)
 
         self.assertTrue(success)
         self.assertEqual(upgraded["id"], 3)
@@ -71,31 +75,24 @@ class TestMagicCabinetMerge(unittest.TestCase):
         self.assertEqual(result["quantity"], 1)
         self.assertEqual(balance["glimmers"], 50)
 
-    def test_merge_fails_without_three_duplicates(self):
+    def test_merge_fails_without_enough_duplicates(self):
         with database.get_connection() as connection:
             connection.execute(
                 """
-                UPDATE bag
-                SET quantity = 3
+                UPDATE bag SET quantity = 3
                 WHERE user_id = ? AND card_id = ?
                 """,
                 (12345, 1),
             )
 
-        success, message, upgraded, reward = merge.merge_card(
-            12345,
-            1,
-        )
+        success, _, upgraded, reward = merge.merge_card(12345, 1)
 
         self.assertFalse(success)
         self.assertIsNone(upgraded)
         self.assertEqual(reward, 0)
 
     def test_limited_card_cannot_be_merged(self):
-        success, message, upgraded, reward = merge.merge_card(
-            12345,
-            5,
-        )
+        success, _, upgraded, reward = merge.merge_card(12345, 5)
 
         self.assertFalse(success)
         self.assertIsNone(upgraded)
