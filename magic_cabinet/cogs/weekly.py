@@ -1,637 +1,231 @@
-
-"""Magic Cabinet weekly challenges."""
-
 import json
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone, timedelta
 
 import discord
 from discord import app_commands
-from discord.ext import commands, tasks
+from discord.ext import commands
 
-from magic_cabinet.database import (
-    get_connection,
-    initialize_database,
+from magic_cabinet.postgres_database import (
+    get_postgres_connection,
+    initialize_postgres_database,
 )
-
 from magic_cabinet.weekly_tracker import (
-    get_pending_notifications,
-    mark_notification_sent,
+    initialize_tracker_database,
     save_weekly_channel,
 )
 
 
-EMBED_COLOR = discord.Color.from_str("#4E0017")
+WEEKLY_TASKS = {
+    "drops": {
+        "name": "Join Drops",
+        "description": "Claim cards from drops.",
+        "target": 5,
+        "reward": 2500,
+    },
+    "daily": {
+        "name": "Daily Magic",
+        "description": "Claim your daily reward.",
+        "target": 3,
+        "reward": 2500,
+    },
+    "earn": {
+        "name": "Gather Glimmers",
+        "description": "Use /earn to collect Glimmers.",
+        "target": 5,
+        "reward": 2500,
+    },
+}
 
-GLIMMER_EMOTE = "<:glimmer:1554842064464773172>"
-
-WEEKLY_HEADER_URL = (
-    "https://raw.githubusercontent.com/"
-    "shibu246800/Yeosang-s-magic-cabinet-/"
-    "refs/heads/main/magic_cabinet/cogs/profile/"
-    "Untitled13_20261005080611.jpg"
-)
-
-WEEKLY_GUARANTEED_GLIMMERS = 10_000
-WEEKLY_GRAND_GLIMMERS = 25_000
-WEEKLY_RESET_DAYS = 7
-
-
-# ---------------------------------------------------------
-# WEEKLY TASK POOLS
-# ---------------------------------------------------------
-
-EASY_TASKS = [
-    {
-        "id": "collect_new_cards_small",
-        "text": "Collect {amount} new cards",
-        "stat": "new_cards",
-        "minimum": 5,
-        "maximum": 10,
-        "reward_min": 3000,
-        "reward_max": 6000,
-    },
-    {
-        "id": "collect_new_cards_medium",
-        "text": "Collect {amount} new cards",
-        "stat": "new_cards",
-        "minimum": 8,
-        "maximum": 12,
-        "reward_min": 3500,
-        "reward_max": 6000,
-    },
-    {
-        "id": "earn_glimmers_small",
-        "text": "Earn {amount:,} Glimmers",
-        "stat": "glimmers_earned",
-        "minimum": 5000,
-        "maximum": 10000,
-        "reward_min": 3000,
-        "reward_max": 6000,
-    },
-    {
-        "id": "earn_glimmers_medium",
-        "text": "Earn {amount:,} Glimmers",
-        "stat": "glimmers_earned",
-        "minimum": 8000,
-        "maximum": 12000,
-        "reward_min": 3500,
-        "reward_max": 6000,
-    },
-    {
-        "id": "claim_drops_small",
-        "text": "Claim {amount} Drops",
-        "stat": "drops_claimed",
-        "minimum": 2,
-        "maximum": 5,
-        "reward_min": 3000,
-        "reward_max": 6000,
-    },
-    {
-        "id": "claim_drops_medium",
-        "text": "Claim {amount} Drops",
-        "stat": "drops_claimed",
-        "minimum": 3,
-        "maximum": 6,
-        "reward_min": 3500,
-        "reward_max": 6000,
-    },
-]
-
-MEDIUM_TASKS = [
-    {
-        "id": "collect_new_cards",
-        "text": "Collect {amount} new cards",
-        "stat": "new_cards",
-        "minimum": 10,
-        "maximum": 20,
-        "reward_min": 7000,
-        "reward_max": 12000,
-    },
-    {
-        "id": "earn_glimmers",
-        "text": "Earn {amount:,} Glimmers",
-        "stat": "glimmers_earned",
-        "minimum": 15000,
-        "maximum": 25000,
-        "reward_min": 7000,
-        "reward_max": 12000,
-    },
-    {
-        "id": "claim_drops",
-        "text": "Claim {amount} Drops",
-        "stat": "drops_claimed",
-        "minimum": 6,
-        "maximum": 12,
-        "reward_min": 7000,
-        "reward_max": 12000,
-    },
-]
-
-HARD_TASKS = [
-    {
-        "id": "collect_new_cards",
-        "text": "Collect {amount} new cards",
-        "stat": "new_cards",
-        "minimum": 20,
-        "maximum": 35,
-        "reward_min": 15000,
-        "reward_max": 25000,
-    },
-    {
-        "id": "earn_glimmers",
-        "text": "Earn {amount:,} Glimmers",
-        "stat": "glimmers_earned",
-        "minimum": 30000,
-        "maximum": 50000,
-        "reward_min": 15000,
-        "reward_max": 25000,
-    },
-    {
-        "id": "claim_drops",
-        "text": "Claim {amount} Drops",
-        "stat": "drops_claimed",
-        "minimum": 15,
-        "maximum": 25,
-        "reward_min": 15000,
-        "reward_max": 25000,
-    },
-]
-
-
-# ---------------------------------------------------------
-# DATABASE
-# ---------------------------------------------------------
 
 def initialize_weekly_database():
-    initialize_database()
+    initialize_postgres_database()
+    initialize_tracker_database()
 
-    with get_connection() as connection:
-        connection.execute(
-            """
+    with get_postgres_connection() as conn:
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS weekly_challenges (
-                user_id INTEGER PRIMARY KEY,
+                user_id BIGINT PRIMARY KEY,
                 week_started TEXT NOT NULL,
                 task_data TEXT NOT NULL,
                 guaranteed_claimed INTEGER NOT NULL DEFAULT 0,
                 reward_claimed INTEGER NOT NULL DEFAULT 0
             )
-            """
-        )
+        """)
 
-        connection.execute(
-            """
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS weekly_progress (
-                user_id INTEGER NOT NULL,
+                user_id BIGINT NOT NULL,
                 task_id TEXT NOT NULL,
                 progress INTEGER NOT NULL DEFAULT 0,
                 completed INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (user_id, task_id)
             )
-            """
-        )
+        """)
 
 
-# ---------------------------------------------------------
-# GLIMMERS
-# ---------------------------------------------------------
+def get_week_start():
+    now = datetime.now(timezone.utc)
+    monday = (now - timedelta(days=now.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return monday.isoformat()
 
-def add_glimmers(user_id: int, amount: int):
-    with get_connection() as connection:
-        connection.execute(
+
+def add_glimmers(user_id, amount):
+    with get_postgres_connection() as conn:
+        conn.execute(
             """
             INSERT INTO balances (user_id, glimmers)
-            VALUES (?, ?)
-            ON CONFLICT(user_id)
-            DO UPDATE SET
-                glimmers = balances.glimmers + excluded.glimmers
+            VALUES (%s, %s)
+            ON CONFLICT (user_id)
+            DO UPDATE SET glimmers = balances.glimmers + EXCLUDED.glimmers
             """,
             (user_id, amount),
         )
 
 
-# ---------------------------------------------------------
-# TASK GENERATION
-# ---------------------------------------------------------
+def get_or_create_weekly_challenge(user_id):
+    initialize_weekly_database()
+    week_start = get_week_start()
 
-def choose_difficulty_pool():
-    roll = random.random()
-
-    if roll < 0.55:
-        return EASY_TASKS
-
-    if roll < 0.85:
-        return MEDIUM_TASKS
-
-    return HARD_TASKS
-
-
-def generate_tasks():
-    selected_tasks = []
-    attempts = 0
-
-    while len(selected_tasks) < 3 and attempts < 100:
-        attempts += 1
-        pool = choose_difficulty_pool()
-        template = random.choice(pool)
-
-        used_stats = {
-            task["stat"]
-            for task in selected_tasks
-        }
-
-        if template["stat"] in used_stats:
-            continue
-
-        task = dict(template)
-
-        task["amount"] = random.randint(
-            template["minimum"],
-            template["maximum"],
-        )
-
-        task["reward"] = random.randint(
-            template["reward_min"],
-            template["reward_max"],
-        )
-
-        if template in EASY_TASKS:
-            task["difficulty"] = "easy"
-        elif template in MEDIUM_TASKS:
-            task["difficulty"] = "medium"
-        else:
-            task["difficulty"] = "hard"
-
-        task["display"] = template["text"].format(
-            amount=task["amount"]
-        )
-
-        selected_tasks.append(task)
-
-    return selected_tasks
-
-
-# ---------------------------------------------------------
-# WEEKLY CYCLE
-# ---------------------------------------------------------
-
-def get_weekly_data(user_id: int):
-    with get_connection() as connection:
-        return connection.execute(
+    with get_postgres_connection() as conn:
+        row = conn.execute(
             """
-            SELECT
-                week_started,
-                task_data,
-                guaranteed_claimed,
-                reward_claimed
+            SELECT week_started, task_data, guaranteed_claimed,
+                   reward_claimed
             FROM weekly_challenges
-            WHERE user_id = ?
+            WHERE user_id = %s
             """,
             (user_id,),
         ).fetchone()
 
+        if row and row["week_started"] == week_start:
+            return row
 
-def is_new_week(week_started: str) -> bool:
-    started = datetime.fromisoformat(week_started)
-    now = datetime.now(timezone.utc)
+        chosen = random.sample(list(WEEKLY_TASKS.keys()), 3)
+        tasks = {task_id: WEEKLY_TASKS[task_id].copy() for task_id in chosen}
 
-    if started.tzinfo is None:
-        started = started.replace(tzinfo=timezone.utc)
-
-    return now >= started + timedelta(days=WEEKLY_RESET_DAYS)
-
-
-def create_new_week(user_id: int):
-    selected_tasks = generate_tasks()
-    now = datetime.now(timezone.utc).isoformat()
-
-    with get_connection() as connection:
-        connection.execute(
+        conn.execute(
             """
-            DELETE FROM weekly_progress
-            WHERE user_id = ?
-            """,
-            (user_id,),
-        )
-
-        connection.execute(
-            """
-            INSERT INTO weekly_challenges (
-                user_id,
-                week_started,
-                task_data,
-                guaranteed_claimed,
-                reward_claimed
-            )
-            VALUES (?, ?, ?, 1, 0)
-            ON CONFLICT(user_id)
+            INSERT INTO weekly_challenges
+                (user_id, week_started, task_data,
+                 guaranteed_claimed, reward_claimed)
+            VALUES (%s, %s, %s, 0, 0)
+            ON CONFLICT (user_id)
             DO UPDATE SET
-                week_started = excluded.week_started,
-                task_data = excluded.task_data,
-                guaranteed_claimed = 1,
+                week_started = EXCLUDED.week_started,
+                task_data = EXCLUDED.task_data,
+                guaranteed_claimed = 0,
                 reward_claimed = 0
             """,
-            (
-                user_id,
-                now,
-                json.dumps(selected_tasks),
-            ),
+            (user_id, week_start, json.dumps(tasks)),
         )
 
-        for task in selected_tasks:
-            connection.execute(
-                """
-                INSERT INTO weekly_progress (
-                    user_id,
-                    task_id,
-                    progress,
-                    completed
-                )
-                VALUES (?, ?, 0, 0)
-                """,
-                (user_id, task["id"]),
-            )
-
-    return selected_tasks
-
-
-def get_current_tasks(user_id: int):
-    row = get_weekly_data(user_id)
-
-    if row is None:
-        return create_new_week(user_id)
-
-    if is_new_week(row["week_started"]):
-        return create_new_week(user_id)
-
-    return json.loads(row["task_data"])
-
-
-# ---------------------------------------------------------
-# PROGRESS
-# ---------------------------------------------------------
-
-def get_task_progress(user_id: int, task_id: str) -> int:
-    with get_connection() as connection:
-        row = connection.execute(
-            """
-            SELECT progress
-            FROM weekly_progress
-            WHERE user_id = ?
-            AND task_id = ?
-            """,
-            (user_id, task_id),
-        ).fetchone()
-
-    return 0 if row is None else row["progress"]
-
-
-def is_task_completed(user_id: int, task_id: str) -> bool:
-    with get_connection() as connection:
-        row = connection.execute(
-            """
-            SELECT completed
-            FROM weekly_progress
-            WHERE user_id = ?
-            AND task_id = ?
-            """,
-            (user_id, task_id),
-        ).fetchone()
-
-    return bool(row and row["completed"])
-
-
-def completed_task_count(user_id: int) -> int:
-    with get_connection() as connection:
-        row = connection.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM weekly_progress
-            WHERE user_id = ?
-            AND completed = 1
-            """,
+        conn.execute(
+            "DELETE FROM weekly_progress WHERE user_id = %s",
             (user_id,),
-        ).fetchone()
-
-    return 0 if row is None else row["total"]
-
-
-# ---------------------------------------------------------
-# DISPLAY
-# ---------------------------------------------------------
-
-def difficulty_emote(difficulty: str) -> str:
-    return {
-        "easy": "🟢",
-        "medium": "🟡",
-        "hard": "🔴",
-    }.get(difficulty, "✦")
-
-
-def build_weekly_embed(
-    user_id: int,
-    selected_tasks: list,
-) -> discord.Embed:
-    completed = completed_task_count(user_id)
-
-    description = (
-        f"<@{user_id}>\n\n"
-        "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
-        "**WEEKLY CHALLENGE**\n"
-        "-# Complete all 3 challenges to unlock your\n"
-        "-# full weekly reward.\n\n"
-    )
-
-    for index, task in enumerate(selected_tasks, start=1):
-        progress = get_task_progress(user_id, task["id"])
-        progress = min(progress, task["amount"])
-
-        marker = (
-            " ✓"
-            if is_task_completed(user_id, task["id"])
-            else ""
         )
 
-        description += (
-            f"{difficulty_emote(task['difficulty'])} "
-            f"**Task {index}**{marker}\n"
-            f"{task['display']}\n"
-            f"`{progress} / {task['amount']}`\n\n"
-        )
+        add_glimmers(user_id, 10000)
 
-    description += (
-        "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
-        "**Weekly Guaranteed Reward**\n"
-        f"+ **{WEEKLY_GUARANTEED_GLIMMERS:,}** "
-        f"{GLIMMER_EMOTE}\n\n"
-        f"-# ✧ Challenges completed: **{completed}/3**\n"
-        "-# ✧ Complete all 3 challenges to unlock\n"
-        "-# the full reward in `/rewards`."
-    )
+        return {
+            "week_started": week_start,
+            "task_data": json.dumps(tasks),
+            "guaranteed_claimed": 0,
+            "reward_claimed": 0,
+        }
 
-    return discord.Embed(
-        description=description,
-        color=EMBED_COLOR,
-    )
-
-
-# ---------------------------------------------------------
-# WEEKLY COG
-# ---------------------------------------------------------
 
 class Weekly(commands.Cog):
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot):
         self.bot = bot
         initialize_weekly_database()
-        self.notification_loop.start()
-
-    def cog_unload(self):
-        self.notification_loop.cancel()
-
-    async def send_pending_notifications(self):
-        notifications = get_pending_notifications()
-
-        for (
-            notification_id,
-            user_id,
-            task_id,
-            guild_id,
-            channel_id,
-        ) in notifications:
-            guild = self.bot.get_guild(guild_id)
-
-            if guild is None:
-                continue
-
-            channel = guild.get_channel(channel_id)
-
-            if channel is None:
-                continue
-
-            if task_id == "__weekly_complete__":
-                embed = discord.Embed(
-                    description=(
-                        "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
-                        "**WEEKLY CHALLENGE COMPLETE!** ✦\n\n"
-                        "**3 / 3 challenges completed** ✓\n\n"
-                        f"+ **{WEEKLY_GRAND_GLIMMERS:,}** "
-                        f"{GLIMMER_EMOTE}\n"
-                        "🃏 **1 New Epic Card**\n"
-                        "📦 **1 Blind Box**\n\n"
-                        "-# ✧ Your full weekly reward is waiting.\n"
-                        "-# ✧ Use `/rewards` to claim everything.\n\n"
-                        "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
-                    ),
-                    color=EMBED_COLOR,
-                )
-
-                await channel.send(
-                    content=f"<@{user_id}>",
-                    embed=embed,
-                )
-
-                mark_notification_sent(notification_id)
-                continue
-
-            selected_tasks = get_current_tasks(user_id)
-
-            task = next(
-                (
-                    item
-                    for item in selected_tasks
-                    if item["id"] == task_id
-                ),
-                None,
-            )
-
-            if task is None:
-                mark_notification_sent(notification_id)
-                continue
-
-            progress = get_task_progress(user_id, task_id)
-            completed = completed_task_count(user_id)
-
-            embed = discord.Embed(
-                description=(
-                    f"<@{user_id}>\n\n"
-                    "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
-                    "**WEEKLY CHALLENGE COMPLETE!** ✦\n\n"
-                    f"{difficulty_emote(task['difficulty'])} "
-                    f"**{task['display']}**\n"
-                    f"`{progress} / {task['amount']}` ✓\n\n"
-                    f"+ **{task['reward']:,}** "
-                    f"{GLIMMER_EMOTE}\n\n"
-                    f"✦ **{completed} / 3** "
-                    "challenges completed\n\n"
-                    "-# ✧ Use `/rewards` to view "
-                    "your waiting rewards.\n"
-                    "-# ✧ Claim them with the "
-                    "button in `/rewards`.\n\n"
-                    "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
-                ),
-                color=EMBED_COLOR,
-            )
-
-            await channel.send(
-                content=f"<@{user_id}>",
-                embed=embed,
-            )
-
-            mark_notification_sent(notification_id)
-
-    @tasks.loop(seconds=5)
-    async def notification_loop(self):
-        await self.send_pending_notifications()
-
-    @notification_loop.before_loop
-    async def before_notification_loop(self):
-        await self.bot.wait_until_ready()
 
     @app_commands.command(
         name="weekly",
-        description="View your weekly challenges.",
+        description="View your weekly challenges and rewards.",
     )
-    async def weekly(
-        self,
-        interaction: discord.Interaction,
-    ):
+    async def weekly(self, interaction: discord.Interaction):
         user_id = interaction.user.id
-        existing = get_weekly_data(user_id)
 
-        if (
-            existing is None
-            or is_new_week(existing["week_started"])
-        ):
-            selected_tasks = create_new_week(user_id)
+        challenge = get_or_create_weekly_challenge(user_id)
+        task_data = challenge["task_data"]
 
-            add_glimmers(
-                user_id,
-                WEEKLY_GUARANTEED_GLIMMERS,
+        if isinstance(task_data, str):
+            task_data = json.loads(task_data)
+
+        with get_postgres_connection() as conn:
+            progress_rows = conn.execute(
+                """
+                SELECT task_id, progress, completed
+                FROM weekly_progress
+                WHERE user_id = %s
+                """,
+                (user_id,),
+            ).fetchall()
+
+        progress = {
+            row["task_id"]: row
+            for row in progress_rows
+        }
+
+        embed = discord.Embed(
+            title="✦ Weekly Challenges ✦",
+            description=(
+                "Complete your challenges to earn Glimmers "
+                "and unlock the grand reward."
+            ),
+            color=discord.Color.from_str("#4E0017"),
+        )
+
+        for task_id, task in task_data.items():
+            row = progress.get(task_id)
+            current = row["progress"] if row else 0
+            completed = bool(row["completed"]) if row else False
+
+            status = "✓ Completed" if completed else f"{current}/{task['target']}"
+
+            embed.add_field(
+                name=f"{task['name']} — {status}",
+                value=(
+                    f"{task['description']}\n"
+                    f"Reward: **{task['reward']:,} Glimmers**"
+                ),
+                inline=False,
             )
-        else:
-            selected_tasks = get_current_tasks(user_id)
 
-        save_weekly_channel(
-            user_id,
-            interaction.guild_id,
-            interaction.channel_id,
+        completed_count = sum(
+            1 for row in progress_rows if row["completed"]
         )
 
-        header = discord.Embed(color=EMBED_COLOR)
-        header.set_image(url=WEEKLY_HEADER_URL)
-
-        weekly_embed = build_weekly_embed(
-            user_id,
-            selected_tasks,
+        embed.add_field(
+            name="Grand Reward",
+            value=(
+                f"Challenges completed: **{completed_count}/3**\n"
+                "Complete all three to unlock **25,000 Glimmers, "
+                "1 Epic card, and 1 Blind Box**."
+            ),
+            inline=False,
         )
+
+        embed.set_footer(text="A new weekly set begins on Monday (UTC).")
 
         await interaction.response.send_message(
-            embeds=[
-                header,
-                weekly_embed,
-            ]
+            embed=embed,
+            ephemeral=True,
         )
 
+        try:
+            save_weekly_channel(
+                user_id,
+                interaction.guild_id,
+                interaction.channel_id,
+            )
+        except Exception:
+            pass
 
-async def setup(bot: commands.Bot):
+
+async def setup(bot):
+    initialize_weekly_database()
     await bot.add_cog(Weekly(bot))
