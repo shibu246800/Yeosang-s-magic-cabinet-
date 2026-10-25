@@ -2,22 +2,27 @@
 """PostgreSQL database helpers for Magic Cabinet."""
 
 import os
-
 import psycopg
+
+from magic_cabinet.database import get_connection
 
 
 def get_postgres_connection():
-    """Open a connection to PostgreSQL."""
+    """Open a PostgreSQL connection."""
+
     database_url = os.getenv("DATABASE_URL")
 
     if not database_url:
         raise RuntimeError("DATABASE_URL is not configured.")
 
-    return psycopg.connect(database_url, connect_timeout=10)
+    return psycopg.connect(
+        database_url,
+        connect_timeout=10,
+    )
 
 
 def initialize_postgres_database():
-    """Create the inventory table without changing SQLite data."""
+    """Create the inventory table without changing existing data."""
 
     with get_postgres_connection() as connection:
         with connection.cursor() as cursor:
@@ -31,4 +36,34 @@ def initialize_postgres_database():
                 )
             """)
 
-        connection.commit()
+
+def migrate_inventory():
+    """Copy SQLite inventory into PostgreSQL without overwriting
+    existing PostgreSQL inventory records.
+    """
+
+    with get_connection() as sqlite_connection:
+        rows = sqlite_connection.execute("""
+            SELECT user_id, card_id, quantity
+            FROM bag
+            WHERE quantity > 0
+        """).fetchall()
+
+        inventory = [
+            (int(row["user_id"]), int(row["card_id"]), int(row["quantity"]))
+            for row in rows
+        ]
+
+    with get_postgres_connection() as postgres_connection:
+        with postgres_connection.cursor() as cursor:
+            cursor.executemany("""
+                INSERT INTO player_card_inventory
+                    (user_id, card_id, quantity)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id, card_id) DO NOTHING
+            """, inventory)
+
+    print(
+        f"[INVENTORY MIGRATION] Processed {len(inventory)} "
+        "SQLite inventory records."
+    )
