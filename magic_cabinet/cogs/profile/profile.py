@@ -2,17 +2,15 @@
 """Magic Cabinet profile command."""
 
 import sqlite3
-from contextlib import contextmanager
-from pathlib import Path
-from typing import Iterator
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from magic_cabinet.database import get_connection
+
 
 EMBED_COLOR = discord.Color.from_str("#4E0017")
-DATABASE = Path(__file__).resolve().parents[2] / "cabinet.db"
 
 HEADER_URL = (
     "https://raw.githubusercontent.com/"
@@ -42,45 +40,11 @@ PROFILE_EMOTES = {
 VAULT_ORDER = ["BB", "GG", "BG"]
 
 
-@contextmanager
-def get_connection() -> Iterator[sqlite3.Connection]:
-    connection = sqlite3.connect(str(DATABASE), timeout=5.0)
-    connection.row_factory = sqlite3.Row
-
-    try:
-        yield connection
-    finally:
-        connection.close()
-
-
 def initialize_profile_database():
+    """Create profile tables in the shared SQLite database."""
+
     with get_connection() as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS player_badges (
-                user_id INTEGER NOT NULL,
-                badge_id TEXT NOT NULL,
-                badge_name TEXT NOT NULL,
-                badge_emote TEXT,
-                PRIMARY KEY (user_id, badge_id)
-            )
-            """
-        )
-
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS player_achievements (
-                user_id INTEGER NOT NULL,
-                achievement_id TEXT NOT NULL,
-                achievement_name TEXT NOT NULL,
-                global_rank INTEGER NOT NULL,
-                PRIMARY KEY (user_id, achievement_id)
-            )
-            """
-        )
-
-        connection.execute(
-            """
+        connection.execute("""
             CREATE TABLE IF NOT EXISTS player_legendary (
                 user_id INTEGER NOT NULL,
                 collection_id TEXT NOT NULL,
@@ -88,11 +52,9 @@ def initialize_profile_database():
                 claimed_at TEXT,
                 PRIMARY KEY (user_id, collection_id)
             )
-            """
-        )
+        """)
 
-        connection.execute(
-            """
+        connection.execute("""
             CREATE TABLE IF NOT EXISTS collection_rewards (
                 user_id INTEGER NOT NULL,
                 collection_id TEXT NOT NULL,
@@ -100,8 +62,7 @@ def initialize_profile_database():
                 claimed_at TEXT,
                 PRIMARY KEY (user_id, collection_id)
             )
-            """
-        )
+        """)
 
 
 def get_player_vaults(user_id: int) -> list[str]:
