@@ -8,17 +8,16 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from magic_cabinet.database import DATABASE_PATH
 from magic_cabinet.data.epic import CARDS as EPIC_CARDS
 from magic_cabinet.data.limited import CARDS as LIMITED_CARDS
 from magic_cabinet.data.normal import CARDS as NORMAL_CARDS
 from magic_cabinet.data.rare import CARDS as RARE_CARDS
 
 
-DATABASE = "cabinet.db"
 EMBED_COLOR = discord.Color.from_str("#4E0017")
 CARDS_PER_PAGE = 12
 
-# Keep these URLs pointed at your existing GitHub image files.
 HEADER_URL = (
     "https://raw.githubusercontent.com/"
     "shibu246800/Yeosang-s-magic-cabinet-/"
@@ -103,7 +102,8 @@ def get_bag_cards(
     The first copy stays in the collection.
     Only copies after the first appear in the Bag.
     """
-    with sqlite3.connect(DATABASE) as connection:
+    with sqlite3.connect(str(DATABASE_PATH)) as connection:
+        connection.row_factory = sqlite3.Row
         rows = connection.execute(
             """
             SELECT card_id, quantity
@@ -115,8 +115,8 @@ def get_bag_cards(
         ).fetchall()
 
     quantities = {
-        int(card_id): int(quantity)
-        for card_id, quantity in rows
+        int(row["card_id"]): int(row["quantity"])
+        for row in rows
     }
     card_data = get_all_card_data()
     cards = []
@@ -165,7 +165,6 @@ def search_bag_cards(
 ) -> list[dict]:
     """Search duplicate cards by Card ID or Collection ID."""
     query = query.strip().upper()
-
     cards = get_bag_cards(user_id)
 
     if not query:
@@ -273,19 +272,6 @@ class BagView(discord.ui.View):
             build_divider_embed(),
         ]
 
-    async def refresh_message(
-        self,
-        interaction: discord.Interaction,
-    ) -> None:
-        """Refresh the original Bag message."""
-        self.update_buttons()
-
-        if self.message is not None:
-            await self.message.edit(
-                embeds=self.get_embeds(interaction.user),
-                view=self,
-            )
-
     async def interaction_check(
         self,
         interaction: discord.Interaction,
@@ -313,6 +299,7 @@ class BagView(discord.ui.View):
         if self.page > 0:
             self.page -= 1
 
+        self.update_buttons()
         await interaction.response.edit_message(
             embeds=self.get_embeds(interaction.user),
             view=self,
@@ -331,6 +318,7 @@ class BagView(discord.ui.View):
         if self.page < self.total_pages - 1:
             self.page += 1
 
+        self.update_buttons()
         await interaction.response.edit_message(
             embeds=self.get_embeds(interaction.user),
             view=self,
