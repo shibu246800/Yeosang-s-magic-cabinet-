@@ -44,10 +44,7 @@ VAULT_ORDER = ["BB", "GG", "BG"]
 
 @contextmanager
 def get_connection() -> Iterator[sqlite3.Connection]:
-    connection = sqlite3.connect(
-        str(DATABASE),
-        timeout=5.0,
-    )
+    connection = sqlite3.connect(str(DATABASE), timeout=5.0)
     connection.row_factory = sqlite3.Row
 
     try:
@@ -297,9 +294,7 @@ class Profile(commands.Cog):
         interaction: discord.Interaction,
         user: discord.User | None = None,
     ):
-        # Acknowledge Discord immediately to prevent interaction expiry.
         await interaction.response.defer(thinking=True)
-
         target = user or interaction.user
 
         try:
@@ -315,10 +310,21 @@ class Profile(commands.Cog):
                 embeds=[header, profile_embed, divider]
             )
 
-        except sqlite3.Error:
+        except sqlite3.Error as error:
+            print(f"[PROFILE DATABASE ERROR] {error!r}")
+
             await interaction.followup.send(
                 "The profile database could not be read. "
-                "Please try again later.",
+                "Please check the bot logs.",
+                ephemeral=True,
+            )
+
+        except Exception as error:
+            print(f"[PROFILE ERROR] {error!r}")
+
+            await interaction.followup.send(
+                "The profile could not be displayed. "
+                "Please check the bot logs.",
                 ephemeral=True,
             )
 
