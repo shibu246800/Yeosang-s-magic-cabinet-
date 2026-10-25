@@ -232,6 +232,7 @@ class MagicCabinetBot(commands.Bot):
             "magic_cabinet.cogs.collection",
             "magic_cabinet.cogs.wild",
             "magic_cabinet.cogs.album",
+            "magic_cabinet.cogs.merge",
         ]
 
         for extension in extensions:
