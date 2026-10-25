@@ -1,14 +1,21 @@
 
-"""Shared SQLite database for Magic Cabinet."""
+"""Database connections for Magic Cabinet.
+
+SQLite is preserved for the existing bot while migration is prepared.
+PostgreSQL is available for the gradual conversion of commands.
+"""
 
 import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
+import psycopg
+from psycopg.rows import dict_row
 
-# Use one consistent database path for the whole project.
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 DATABASE_PATH = Path(
     os.getenv("DATABASE_PATH", str(PROJECT_ROOT / "cabinet.db"))
 ).expanduser().resolve()
@@ -16,8 +23,7 @@ DATABASE_PATH = Path(
 
 @contextmanager
 def get_connection():
-    """Open a SQLite connection and safely close it afterward."""
-
+    """Open the existing SQLite database."""
     DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     connection = sqlite3.connect(
@@ -33,9 +39,28 @@ def get_connection():
         connection.close()
 
 
-def initialize_database():
-    """Create shared tables and safely add missing columns."""
+def get_postgres_connection():
+    """Open the persistent PostgreSQL database."""
+    database_url = os.getenv("DATABASE_URL")
 
+    if not database_url:
+        raise RuntimeError("DATABASE_URL is not configured.")
+
+    connection = psycopg.connect(
+        database_url,
+        connect_timeout=10,
+        row_factory=dict_row,
+    )
+
+    try:
+        yield_connection = connection
+        yield yield_connection
+    finally:
+        connection.close()
+
+
+def initialize_database():
+    """Initialize the existing SQLite tables without deleting data."""
     with get_connection() as connection:
         connection.execute("""
             CREATE TABLE IF NOT EXISTS drop_channels (
@@ -100,7 +125,6 @@ def initialize_database():
             )
         """)
 
-        # Safely add columns to existing SQLite databases.
         booster_columns = {
             row["name"]
             for row in connection.execute(
