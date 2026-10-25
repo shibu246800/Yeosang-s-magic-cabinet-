@@ -1,8 +1,10 @@
-8
+
 import os
+import asyncio
 import threading
 
 import discord
+import psycopg
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
@@ -17,6 +19,7 @@ from magic_cabinet.database import (
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
+
 
 if not TOKEN:
     raise RuntimeError("DISCORD_TOKEN is missing.")
@@ -49,6 +52,38 @@ threading.Thread(
 
 
 EMBED_COLOR = discord.Color.from_str("#4E0017")
+
+
+# ---------------------------------------------------------
+# PRISMA CONNECTION TEST
+# ---------------------------------------------------------
+
+async def test_prisma_connection():
+    database_url = os.getenv("DATABASE_URL")
+
+    if not database_url:
+        print("[PRISMA TEST] DATABASE_URL is missing.")
+        return
+
+    def check_connection():
+        with psycopg.connect(
+            database_url,
+            connect_timeout=5,
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                return cursor.fetchone()[0]
+
+    try:
+        result = await asyncio.to_thread(check_connection)
+
+        if result == 1:
+            print("[PRISMA TEST] CONNECTION SUCCESSFUL!")
+
+    except Exception as error:
+        print(
+            f"[PRISMA TEST] FAILED: {type(error).__name__}"
+        )
 
 
 # ---------------------------------------------------------
@@ -132,7 +167,7 @@ class CabinetCommandTree(app_commands.CommandTree):
         except Exception as error:
             print(
                 "ERROR: The Cabinet command lock could not "
-                f"check the database: {error}"
+                f"check the database: {type(error).__name__}"
             )
 
             await interaction.response.send_message(
@@ -155,8 +190,12 @@ class MagicCabinetBot(commands.Bot):
     async def setup_hook(self):
         print("=== SETUP HOOK STARTED ===")
 
-        # Create the SQLite tables before loading extensions.
+        # Keep the existing SQLite database active.
         initialize_database()
+        print("[SQLITE] Database initialized.")
+
+        # Test Prisma without migrating or changing player data.
+        await test_prisma_connection()
 
         extensions = [
             "magic_cabinet.cogs.cabinet",
@@ -174,7 +213,7 @@ class MagicCabinetBot(commands.Bot):
             "magic_cabinet.cogs.collection",
             "magic_cabinet.cogs.wild",
             "magic_cabinet.cogs.album",
-            ]
+        ]
 
         for extension in extensions:
             await self.load_extension(extension)
