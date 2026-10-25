@@ -2,13 +2,13 @@
 """Magic Cabinet profile command."""
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 import discord
 from discord import app_commands
 from discord.ext import commands
-
-from magic_cabinet.data.collections import COLLECTIONS
 
 
 EMBED_COLOR = discord.Color.from_str("#4E0017")
@@ -42,10 +42,18 @@ PROFILE_EMOTES = {
 VAULT_ORDER = ["BB", "GG", "BG"]
 
 
-def get_connection():
-    connection = sqlite3.connect(str(DATABASE))
+@contextmanager
+def get_connection() -> Iterator[sqlite3.Connection]:
+    connection = sqlite3.connect(
+        str(DATABASE),
+        timeout=5.0,
+    )
     connection.row_factory = sqlite3.Row
-    return connection
+
+    try:
+        yield connection
+    finally:
+        connection.close()
 
 
 def initialize_profile_database():
@@ -187,7 +195,11 @@ def get_top_achievements(user_id: int) -> list[tuple[str, int]]:
 
 
 def format_vaults(vaults: list[str]) -> str:
-    return " • ".join(f"**{vault}**" for vault in vaults) if vaults else "None yet"
+    return (
+        " • ".join(f"**{vault}**" for vault in vaults)
+        if vaults
+        else "None yet"
+    )
 
 
 def format_badges(badges: list[tuple[str, str | None]]) -> str:
@@ -195,12 +207,16 @@ def format_badges(badges: list[tuple[str, str | None]]) -> str:
         return "None yet"
 
     return "\n".join(
-        f"{emote} **{name}**" if emote else f"🏅 **{name}**"
+        f"{emote} **{name}**"
+        if emote
+        else f"🏅 **{name}**"
         for name, emote in badges
     )
 
 
-def format_achievements(achievements: list[tuple[str, int]]) -> str:
+def format_achievements(
+    achievements: list[tuple[str, int]],
+) -> str:
     if not achievements:
         return "None yet"
 
@@ -246,16 +262,21 @@ def build_profile_content(user: discord.User) -> discord.Embed:
 
     if achievements:
         description += (
-            f"\n\n{PROFILE_EMOTES['achievements']} **Global Achievements**\n"
+            f"\n\n{PROFILE_EMOTES['achievements']} "
+            "**Global Achievements**\n"
             f"{format_achievements(achievements)}"
         )
 
-    embed = discord.Embed(description=description, color=EMBED_COLOR)
+    embed = discord.Embed(
+        description=description,
+        color=EMBED_COLOR,
+    )
     embed.set_author(
         name=f"{user.display_name}'s Profile",
         icon_url=user.display_avatar.url,
     )
     embed.set_footer(text="Yeosang's Magic Cabinet")
+
     return embed
 
 
@@ -268,25 +289,38 @@ class Profile(commands.Cog):
         name="profile",
         description="View a Magic Cabinet identity card.",
     )
-    @app_commands.describe(user="The player whose profile you want to view.")
+    @app_commands.describe(
+        user="The player whose profile you want to view."
+    )
     async def profile(
         self,
         interaction: discord.Interaction,
         user: discord.User | None = None,
     ):
+        # Acknowledge Discord immediately to prevent interaction expiry.
+        await interaction.response.defer(thinking=True)
+
         target = user or interaction.user
 
-        header = discord.Embed(color=EMBED_COLOR)
-        header.set_image(url=HEADER_URL)
+        try:
+            header = discord.Embed(color=EMBED_COLOR)
+            header.set_image(url=HEADER_URL)
 
-        profile = build_profile_content(target)
+            profile_embed = build_profile_content(target)
 
-        divider = discord.Embed(color=EMBED_COLOR)
-        divider.set_image(url=DIVIDER_URL)
+            divider = discord.Embed(color=EMBED_COLOR)
+            divider.set_image(url=DIVIDER_URL)
 
-        await interaction.response.send_message(
-            embeds=[header, profile, divider]
-        )
+            await interaction.followup.send(
+                embeds=[header, profile_embed, divider]
+            )
+
+        except sqlite3.Error:
+            await interaction.followup.send(
+                "The profile database could not be read. "
+                "Please try again later.",
+                ephemeral=True,
+            )
 
 
 async def setup(bot: commands.Bot):
