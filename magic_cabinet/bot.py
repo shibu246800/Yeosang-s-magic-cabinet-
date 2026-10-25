@@ -16,13 +16,12 @@ from magic_cabinet.database import (
 )
 from magic_cabinet.postgres_database import (
     initialize_postgres_database,
+    check_postgres_tables,
 )
-
 
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-
 
 if not TOKEN:
     raise RuntimeError("DISCORD_TOKEN is missing.")
@@ -50,19 +49,18 @@ threading.Thread(
     daemon=True,
 ).start()
 
-
 EMBED_COLOR = discord.Color.from_str("#4E0017")
 
 
 # ---------------------------------------------------------
-# PRISMA CONNECTION TEST
+# POSTGRESQL CONNECTION TEST
 # ---------------------------------------------------------
 
 async def test_prisma_connection():
     database_url = os.getenv("DATABASE_URL")
 
     if not database_url:
-        print("[PRISMA TEST] DATABASE_URL is missing.")
+        print("[POSTGRES TEST] DATABASE_URL is missing.")
         return False
 
     def check_connection():
@@ -78,19 +76,20 @@ async def test_prisma_connection():
         result = await asyncio.to_thread(check_connection)
 
         if result == 1:
-            print("[PRISMA TEST] CONNECTION SUCCESSFUL!")
+            print("[POSTGRES TEST] CONNECTION SUCCESSFUL!")
             return True
 
     except Exception as error:
         print(
-            f"[PRISMA TEST] FAILED: {type(error).__name__}"
+            f"[POSTGRES TEST] FAILED: "
+            f"{type(error).__name__}: {error}"
         )
 
     return False
 
 
 # ---------------------------------------------------------
-# COMMAND ACCESS CONTROL
+# COMMAND ACCESS CONTROL — EXISTING SQLITE
 # ---------------------------------------------------------
 
 class CabinetCommandTree(app_commands.CommandTree):
@@ -190,11 +189,11 @@ class MagicCabinetBot(commands.Bot):
     async def setup_hook(self):
         print("=== SETUP HOOK STARTED ===")
 
-        # Preserve the existing SQLite database.
+        # Keep the existing SQLite database active.
         initialize_database()
         print("[SQLITE] Database initialized.")
 
-        # Initialize PostgreSQL without migrating any cards.
+        # Check PostgreSQL without migrating player records.
         connected = await test_prisma_connection()
 
         if connected:
@@ -202,18 +201,19 @@ class MagicCabinetBot(commands.Bot):
                 await asyncio.to_thread(
                     initialize_postgres_database
                 )
-                print(
-                    "[POSTGRESQL] Inventory table initialized."
-                )
+                print("[POSTGRES] Known tables initialized.")
+
+                await asyncio.to_thread(check_postgres_tables)
+                print("[POSTGRES] Table check completed.")
+
             except Exception as error:
                 print(
-                    "[POSTGRESQL] Initialization failed: "
+                    "[POSTGRES] Check failed: "
                     f"{type(error).__name__}: {error}"
                 )
         else:
             print(
-                "[POSTGRESQL] Skipped initialization. "
-                "Existing SQLite data remains active."
+                "[POSTGRES] Skipped. SQLite remains active."
             )
 
         extensions = [
@@ -242,7 +242,6 @@ class MagicCabinetBot(commands.Bot):
         print("=== ALL EXTENSIONS LOADED ===")
 
         synced = await self.tree.sync()
-
         print(
             f"=== SYNCED {len(synced)} APPLICATION COMMANDS ==="
         )
