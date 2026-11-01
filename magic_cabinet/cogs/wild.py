@@ -4,12 +4,12 @@
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-import sqlite3
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from magic_cabinet.database import get_connection, initialize_database
 from magic_cabinet.data.normal import CARDS as NORMAL_CARDS
 from magic_cabinet.data.rare import CARDS as RARE_CARDS
 from magic_cabinet.data.epic import CARDS as EPIC_CARDS
@@ -21,7 +21,6 @@ EMBED_COLOR = discord.Color.from_str("#4E0017")
 GLIMMER_EMOTE = "<:glimmer:1554842064464773172>"
 GLIMMER_REWARD = 100_000
 
-DATABASE = Path(__file__).resolve().parents[2] / "cabinet.db"
 COLLECTIONS_FILE = (
     Path(__file__).resolve().parents[1]
     / "data"
@@ -36,37 +35,8 @@ BASE_CARDS = (
 )
 
 
-def get_connection():
-    connection = sqlite3.connect(str(DATABASE))
-    connection.row_factory = sqlite3.Row
-    return connection
-
-
 def initialize_wild_database():
-    with get_connection() as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS player_legendary (
-                user_id INTEGER NOT NULL,
-                collection_id TEXT NOT NULL,
-                legendary_id TEXT NOT NULL,
-                claimed_at TEXT,
-                PRIMARY KEY (user_id, collection_id)
-            )
-            """
-        )
-
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS collection_rewards (
-                user_id INTEGER NOT NULL,
-                collection_id TEXT NOT NULL,
-                claimed INTEGER NOT NULL DEFAULT 0,
-                claimed_at TEXT,
-                PRIMARY KEY (user_id, collection_id)
-            )
-            """
-        )
+    initialize_database()
 
 
 def load_collections():
@@ -224,6 +194,7 @@ class Wild(commands.Cog):
 
             if previous_claim and int(previous_claim["claimed"]) == 1:
                 connection.rollback()
+
                 await interaction.response.send_message(
                     embed=discord.Embed(
                         description="You have already claimed this reward.",
@@ -297,7 +268,10 @@ class Wild(commands.Cog):
         if legendary.get("image"):
             embed.set_image(url=legendary["image"])
 
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True,
+        )
 
 
 async def setup(bot: commands.Bot):
