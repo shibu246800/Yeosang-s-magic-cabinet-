@@ -54,7 +54,7 @@ def initialize_rewards_database():
 
 def get_pending_rewards(user_id: int):
     with get_connection() as connection:
-        return connection.execute(
+        rows = connection.execute(
             """
             SELECT reward_id, reward_type, amount, task_id
             FROM weekly_pending_rewards
@@ -63,6 +63,8 @@ def get_pending_rewards(user_id: int):
             """,
             (user_id,),
         ).fetchall()
+
+    return [dict(row) for row in rows]
 
 
 def get_blind_box_count(user_id: int) -> int:
@@ -150,11 +152,25 @@ def add_glimmers(user_id: int, amount: int):
         )
 
 
-def choose_new_epic(user_id: int):
+def choose_new_epic(connection, user_id: int):
+    """Choose an Epic card the player does not already own."""
+
+    rows = connection.execute(
+        """
+        SELECT card_id
+        FROM bag
+        WHERE user_id = ?
+        """,
+        (user_id,),
+    ).fetchall()
+
+    owned_ids = {int(row["card_id"]) for row in rows}
+
     available = [
         card for card in EPIC_CARDS
-        if get_bag_quantity(user_id, int(card["id"])) == 0
+        if int(card["id"]) not in owned_ids
     ]
+
     return random.choice(available) if available else None
 
 
@@ -178,7 +194,9 @@ def draw_ornament(draw: ImageDraw.ImageDraw, x: int, y: int):
 async def create_blind_box_display(cards: list[dict]) -> BytesIO:
     images = []
 
-    async with aiohttp.ClientSession() as session:
+    timeout = aiohttp.ClientTimeout(total=30)
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         for card in cards:
             async with session.get(card["image"]) as response:
                 response.raise_for_status()
@@ -263,7 +281,7 @@ def claim_rewards(user_id: int):
             for reward in pending
         )
 
-        epic_card = choose_new_epic(user_id) if has_grand else None
+        epic_card = choose_new_epic(connection, user_id) if has_grand else None
 
         total_glimmers = task_glimmers + (
             WEEKLY_GRAND_GLIMMERS if has_grand else 0
@@ -318,6 +336,20 @@ def claim_rewards(user_id: int):
         "epic": epic_card,
         "blind_boxes": 1 if has_grand else 0,
     }
+
+
+def add_blind_box_cards(user_id: int, cards: list[dict]):
+    with get_connection() as connection:
+        for card in cards:
+            connection.execute(
+                """
+                INSERT INTO bag (user_id, card_id, quantity)
+                VALUES (?, ?, 1)
+                ON CONFLICT(user_id, card_id)
+                DO UPDATE SET quantity = bag.quantity + 1
+                """,
+                (user_id, int(card["id"])),
+            )
 
 
 def build_reward_embed(user: discord.User | discord.Member, pending):
@@ -391,59 +423,74 @@ class RewardsView(discord.ui.View):
             )
             return
 
-        result = claim_rewards(interaction.user.id)
+        await interaction.response.defer()
 
-        if result is None:
-            await interaction.response.send_message(
+        try:
+            result = await asyncio.to_thread(
+                claim_rewards,
+                interaction.user.id,
+            )
+
+            if result is None:
+                await interaction.followup.send(
+                    embed=discord.Embed(
+                        description="✦ You have no rewards waiting.",
+                        color=EMBED_COLOR,
+                    ),
+                    ephemeral=True,
+                )
+                return
+
+            lines = [
+                f"**{interaction.user.mention}**",
+                "",
+                "✦ ───── ⋆⋅☆⋅⋆ ───── ✦",
+                "",
+                "**REWARDS CLAIMED!** ✦",
+                "",
+            ]
+
+            if result["task_glimmers"]:
+                lines.append(
+                    f"+ **{result['task_glimmers']:,}** {GLIMMER_EMOTE}"
+                )
+
+            if result["grand_glimmers"]:
+                lines.append(
+                    f"+ **{result['grand_glimmers']:,}** {GLIMMER_EMOTE}"
+                )
+
+            if result["epic"]:
+                lines.append(
+                    f"+ **{result['epic']['id']}** `NEW Epic card`"
+                )
+
+            if result["blind_boxes"]:
+                lines.append("+ **1 Blind Box** 📦")
+
+            lines.extend([
+                "",
+                "✦ ───── ⋆⋅☆⋅⋆ ───── ✦",
+            ])
+
+            button.disabled = True
+
+            await interaction.edit_original_response(
                 embed=discord.Embed(
-                    description="✦ You have no rewards waiting.",
+                    description="\n".join(lines),
+                    color=EMBED_COLOR,
+                ),
+                view=self,
+            )
+
+        except Exception:
+            await interaction.followup.send(
+                embed=discord.Embed(
+                    description="✦ Something went wrong while claiming your rewards. Please try again.",
                     color=EMBED_COLOR,
                 ),
                 ephemeral=True,
             )
-            return
-
-        lines = [
-            f"**{interaction.user.mention}**",
-            "",
-            "✦ ───── ⋆⋅☆⋅⋆ ───── ✦",
-            "",
-            "**REWARDS CLAIMED!** ✦",
-            "",
-        ]
-
-        if result["task_glimmers"]:
-            lines.append(
-                f"+ **{result['task_glimmers']:,}** {GLIMMER_EMOTE}"
-            )
-
-        if result["grand_glimmers"]:
-            lines.append(
-                f"+ **{result['grand_glimmers']:,}** {GLIMMER_EMOTE}"
-            )
-
-        if result["epic"]:
-            lines.append(
-                f"+ **{result['epic']['id']}** `NEW Epic card`"
-            )
-
-        if result["blind_boxes"]:
-            lines.append("+ **1 Blind Box** 📦")
-
-        lines.extend([
-            "",
-            "✦ ───── ⋆⋅☆⋅⋆ ───── ✦",
-        ])
-
-        button.disabled = True
-
-        await interaction.response.edit_message(
-            embed=discord.Embed(
-                description="\n".join(lines),
-                color=EMBED_COLOR,
-            ),
-            view=self,
-        )
 
 
 class BlindBoxView(discord.ui.View):
@@ -483,137 +530,163 @@ class BlindBoxView(discord.ui.View):
             )
             return
 
+        await interaction.response.defer()
+
         self.claimed = True
 
-        with get_connection() as connection:
-            for card in self.cards:
-                connection.execute(
-                    """
-                    INSERT INTO bag (user_id, card_id, quantity)
-                    VALUES (?, ?, 1)
-                    ON CONFLICT(user_id, card_id)
-                    DO UPDATE SET quantity = bag.quantity + 1
-                    """,
-                    (self.user_id, int(card["id"])),
-                )
+        try:
+            await asyncio.to_thread(
+                add_blind_box_cards,
+                self.user_id,
+                self.cards,
+            )
 
-        button.disabled = True
+            button.disabled = True
 
-        await interaction.response.edit_message(
-            attachments=[],
-            embeds=[],
-            view=self,
-        )
+            await interaction.edit_original_response(
+                attachments=[],
+                embeds=[],
+                view=self,
+            )
 
-        await interaction.followup.send(
-            embed=discord.Embed(
-                description="✦ Your 5 Blind Box cards have been added to your Bag.",
-                color=EMBED_COLOR,
-            ),
-            ephemeral=True,
-        )
+            await interaction.followup.send(
+                embed=discord.Embed(
+                    description="✦ Your 5 Blind Box cards have been added to your Bag.",
+                    color=EMBED_COLOR,
+                ),
+                ephemeral=True,
+            )
+
+        except Exception:
+            self.claimed = False
+
+            await interaction.followup.send(
+                embed=discord.Embed(
+                    description="✦ Something went wrong while adding your cards. Please try again.",
+                    color=EMBED_COLOR,
+                ),
+                ephemeral=True,
+            )
 
 
 class Rewards(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        initialize_rewards_database()
 
     @app_commands.command(
         name="rewards",
         description="View and claim your waiting rewards.",
     )
     async def rewards(self, interaction: discord.Interaction):
-        pending = get_pending_rewards(interaction.user.id)
+        await interaction.response.defer(thinking=True)
 
-        if not pending:
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    description="✦ You have no rewards waiting right now.",
-                    color=EMBED_COLOR,
-                ),
-                ephemeral=True,
+        try:
+            pending = await asyncio.to_thread(
+                get_pending_rewards,
+                interaction.user.id,
             )
-            return
 
-        await interaction.response.send_message(
-            embed=build_reward_embed(interaction.user, pending),
-            view=RewardsView(interaction.user.id),
-        )
+            if not pending:
+                await interaction.edit_original_response(
+                    embed=discord.Embed(
+                        description="✦ You have no rewards waiting right now.",
+                        color=EMBED_COLOR,
+                    )
+                )
+                return
+
+            await interaction.edit_original_response(
+                embed=build_reward_embed(interaction.user, pending),
+                view=RewardsView(interaction.user.id),
+            )
+
+        except Exception:
+            await interaction.edit_original_response(
+                content="Something went wrong while checking your rewards. Please try again.",
+                embed=None,
+            )
 
     @app_commands.command(
         name="blindbox",
         description="Open a Blind Box.",
     )
     async def blindbox(self, interaction: discord.Interaction):
-        if get_blind_box_count(interaction.user.id) <= 0:
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    description="✦ You don't have a Blind Box.",
-                    color=EMBED_COLOR,
-                ),
-                ephemeral=True,
+        await interaction.response.defer(thinking=True)
+
+        try:
+            removed = await asyncio.to_thread(
+                remove_blind_box,
+                interaction.user.id,
             )
-            return
 
-        if not remove_blind_box(interaction.user.id):
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    description="✦ You don't have a Blind Box.",
-                    color=EMBED_COLOR,
-                ),
-                ephemeral=True,
-            )
-            return
+            if not removed:
+                await interaction.delete_original_response()
 
-        cards = choose_blind_box_cards()
-        view = BlindBoxView(interaction.user.id, cards)
-
-        await interaction.response.send_message(
-            embed=discord.Embed().set_image(
-                url=BLIND_BOX_FRAMES[0]
-            ),
-        )
-
-        await asyncio.sleep(5)
-        await interaction.edit_original_response(
-            embed=discord.Embed().set_image(
-                url=BLIND_BOX_FRAMES[1]
-            ),
-        )
-
-        await asyncio.sleep(5)
-        await interaction.edit_original_response(
-            embed=discord.Embed().set_image(
-                url=BLIND_BOX_FRAMES[2]
-            ),
-        )
-
-        await asyncio.sleep(5)
-        await interaction.edit_original_response(
-            embed=discord.Embed().set_image(
-                url=BLIND_BOX_FRAMES[3]
-            ),
-        )
-
-        await asyncio.sleep(5)
-
-        image = await create_blind_box_display(cards)
-
-        await interaction.edit_original_response(
-            embed=discord.Embed(color=EMBED_COLOR).set_image(
-                url="attachment://blind_box_cards.png"
-            ),
-            attachments=[
-                discord.File(
-                    image,
-                    filename="blind_box_cards.png",
+                await interaction.followup.send(
+                    embed=discord.Embed(
+                        description="✦ You don't have a Blind Box.",
+                        color=EMBED_COLOR,
+                    ),
+                    ephemeral=True,
                 )
-            ],
-            view=view,
-        )
+                return
+
+            cards = choose_blind_box_cards()
+            view = BlindBoxView(interaction.user.id, cards)
+
+            await interaction.edit_original_response(
+                embed=discord.Embed().set_image(
+                    url=BLIND_BOX_FRAMES[0]
+                ),
+            )
+
+            await asyncio.sleep(5)
+            await interaction.edit_original_response(
+                embed=discord.Embed().set_image(
+                    url=BLIND_BOX_FRAMES[1]
+                ),
+            )
+
+            await asyncio.sleep(5)
+            await interaction.edit_original_response(
+                embed=discord.Embed().set_image(
+                    url=BLIND_BOX_FRAMES[2]
+                ),
+            )
+
+            await asyncio.sleep(5)
+            await interaction.edit_original_response(
+                embed=discord.Embed().set_image(
+                    url=BLIND_BOX_FRAMES[3]
+                ),
+            )
+
+            await asyncio.sleep(5)
+
+            image = await create_blind_box_display(cards)
+
+            await interaction.edit_original_response(
+                embed=discord.Embed(color=EMBED_COLOR).set_image(
+                    url="attachment://blind_box_cards.png"
+                ),
+                attachments=[
+                    discord.File(
+                        image,
+                        filename="blind_box_cards.png",
+                    )
+                ],
+                view=view,
+            )
+
+        except Exception:
+            await interaction.edit_original_response(
+                content="Something went wrong while opening your Blind Box. Please contact staff before trying again.",
+                embed=None,
+                attachments=[],
+                view=None,
+            )
 
 
 async def setup(bot: commands.Bot):
-    initialize_rewards_database()
+    await asyncio.to_thread(initialize_rewards_database)
     await bot.add_cog(Rewards(bot))
