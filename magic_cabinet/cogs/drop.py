@@ -1,4 +1,3 @@
-
 """Drop command."""
 
 import asyncio
@@ -15,7 +14,7 @@ from magic_cabinet.data.epic import CARDS as EPIC_CARDS
 from magic_cabinet.data.limited import CARDS as LIMITED_CARDS
 from magic_cabinet.data.normal import CARDS as NORMAL_CARDS
 from magic_cabinet.data.rare import CARDS as RARE_CARDS
-from magic_cabinet.database import get_connection, initialize_database
+from magic_cabinet.database import get_connection
 from magic_cabinet.weekly_tracker import record_weekly_progress
 
 
@@ -63,9 +62,7 @@ VAULT_SERIES = {
 }
 
 
-def initialize_bag_database():
-    initialize_database()
-
+# ── Card selection ─────────────────────────────────────
 
 def choose_rarity() -> str:
     return random.choices(
@@ -99,11 +96,14 @@ def choose_drop_cards() -> list[dict]:
             random.choice(rarity_cards)
             if rarity_cards else random.choice(available_cards)
         )
+
         selected_cards.append(selected_card)
         available_cards.remove(selected_card)
 
     return selected_cards
 
+
+# ── Collection information ────────────────────────────
 
 def get_collection(collection_id: str) -> dict:
     return COLLECTIONS.get(
@@ -144,6 +144,8 @@ def get_rarity_reward(card: dict) -> int:
     return RARITY_REWARDS.get(card["stars"], 0)
 
 
+# ── Database helpers ───────────────────────────────────
+
 def get_bag_quantity(user_id: int, card_id: int) -> int:
     with get_connection() as connection:
         row = connection.execute(
@@ -155,6 +157,21 @@ def get_bag_quantity(user_id: int, card_id: int) -> int:
         ).fetchone()
 
     return row["quantity"] if row else 0
+
+
+def get_owned_card_ids(user_id: int) -> set[int]:
+    """Fetch all card IDs already held by a player."""
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT card_id
+            FROM bag
+            WHERE user_id = ? AND quantity > 0
+            """,
+            (user_id,),
+        ).fetchall()
+
+    return {int(row["card_id"]) for row in rows}
 
 
 def add_to_bag(user_id: int, card_id: int) -> tuple[int, bool]:
@@ -178,6 +195,7 @@ def add_to_bag(user_id: int, card_id: int) -> tuple[int, bool]:
             return 1, True
 
         new_quantity = row["quantity"] + 1
+
         connection.execute(
             """
             UPDATE bag SET quantity = ?
@@ -240,7 +258,46 @@ def get_saved_drop_channels(guild_id: int) -> list[int]:
     ]
 
 
-def format_card(card: dict, owner_id: int, position: int) -> str:
+def process_claim_rewards(
+    user_id: int,
+    card_id: int,
+    rarity_reward: int,
+    is_owner: bool,
+) -> tuple[int, bool, int]:
+    """Process a card claim and its rewards outside the Discord event loop."""
+
+    quantity, was_new = add_to_bag(user_id, card_id)
+
+    total_reward = rarity_reward
+
+    if is_owner:
+        total_reward += DROP_OWNER_REWARD
+
+    add_glimmers(user_id, total_reward)
+
+    record_weekly_progress(
+        user_id,
+        "drops_claimed",
+        1,
+    )
+
+    if was_new:
+        record_weekly_progress(
+            user_id,
+            "new_cards",
+            1,
+        )
+
+    return quantity, was_new, total_reward
+
+
+# ── Card formatting ────────────────────────────────────
+
+def format_card(
+    card: dict,
+    owner_card_ids: set[int],
+    position: int,
+) -> str:
     rarity_emote = RARITY_EMOTES[card["stars"]]
     position_emote = POSITION_EMOTES[position]
     collection_id = card["collection_id"]
@@ -248,7 +305,8 @@ def format_card(card: dict, owner_id: int, position: int) -> str:
 
     vault = collection.get("vault", collection_id.split("_")[0])
     collection_name = collection.get("name", "Unknown Collection")
-    owner_has_card = get_bag_quantity(owner_id, card["id"]) > 0
+
+    owner_has_card = int(card["id"]) in owner_card_ids
     owner_marker = f"{OWNER_EMOTE} " if owner_has_card else ""
 
     return (
@@ -256,6 +314,8 @@ def format_card(card: dict, owner_id: int, position: int) -> str:
         f"`{vault}` • **{collection_name}**"
     )
 
+
+# ── Card buttons ───────────────────────────────────────
 
 class CardButton(discord.ui.Button):
 
@@ -282,12 +342,15 @@ class CardButton(discord.ui.Button):
         )
 
     async def callback(self, interaction: discord.Interaction):
+        # Acknowledge the button interaction before database work.
+        await interaction.response.defer()
+
         view = self.card_view
         user_id = interaction.user.id
 
         async with view.claim_lock:
             if view.expired:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     embed=discord.Embed(
                         description="✦ This drop has already ended.",
                         color=CABINET_COLOR,
@@ -296,9 +359,13 @@ class CardButton(discord.ui.Button):
                 )
                 return
 
-            selected_vaults = get_player_vaults(user_id)
+            selected_vaults = await asyncio.to_thread(
+                get_player_vaults,
+                user_id,
+            )
+
             if not selected_vaults:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     embed=discord.Embed(
                         description=(
                             "🔒 Your Cabinet Vaults are not set yet.\n\n"
@@ -311,8 +378,9 @@ class CardButton(discord.ui.Button):
                 return
 
             card_vault = get_card_vault(self.card)
+
             if card_vault not in selected_vaults:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     embed=discord.Embed(
                         description=(
                             f"🔒 This card belongs to the **{card_vault} Vault**.\n\n"
@@ -334,7 +402,7 @@ class CardButton(discord.ui.Button):
 
             if not is_owner:
                 if previous_choice is not None:
-                    await interaction.response.send_message(
+                    await interaction.followup.send(
                         embed=discord.Embed(
                             description=(
                                 "✦ You have already claimed a card from this drop.\n\n"
@@ -347,7 +415,7 @@ class CardButton(discord.ui.Button):
                     return
 
                 if self.claimant is not None:
-                    await interaction.response.send_message(
+                    await interaction.followup.send(
                         embed=discord.Embed(
                             description="✦ This card has already been claimed.",
                             color=CABINET_COLOR,
@@ -361,7 +429,7 @@ class CardButton(discord.ui.Button):
 
             else:
                 if previous_choice == self.number:
-                    await interaction.response.send_message(
+                    await interaction.followup.send(
                         embed=discord.Embed(
                             description=(
                                 f"{OWNER_EMOTE} You are already claiming this card."
@@ -374,6 +442,7 @@ class CardButton(discord.ui.Button):
 
                 if previous_choice is not None:
                     previous_button = view.get_button(previous_choice)
+
                     if previous_button is not None:
                         if (
                             previous_button.claimant
@@ -387,6 +456,7 @@ class CardButton(discord.ui.Button):
                     and self.claimant.id != user_id
                 ):
                     previous_claimant = self.claimant
+
                     if (
                         view.player_choices.get(previous_claimant.id)
                         == self.number
@@ -398,14 +468,18 @@ class CardButton(discord.ui.Button):
 
             self.label = "1" if self.claimant else "0"
 
-        await interaction.response.defer(ephemeral=True)
-        await view.update_buttons()
+            # Complete the deferred component interaction by updating
+            # the original drop message.
+            await interaction.edit_original_response(view=view)
 
+
+# ── Drop view ──────────────────────────────────────────
 
 class CardDropView(discord.ui.View):
 
     def __init__(self, cards: list[dict], owner_id: int):
         super().__init__(timeout=DROP_DURATION)
+
         self.cards = cards
         self.owner_id = owner_id
         self.player_choices: dict[int, int] = {}
@@ -434,6 +508,7 @@ class CardDropView(discord.ui.View):
     async def on_timeout(self):
         async with self.claim_lock:
             self.expired = True
+
             for item in self.children:
                 if isinstance(item, CardButton):
                     item.disabled = True
@@ -462,6 +537,7 @@ class CardDropView(discord.ui.View):
             rarity = card["stars"]
             rarity_reward = get_rarity_reward(card)
             collection_id = card["collection_id"]
+
             collection = get_collection(collection_id)
             vault = collection.get(
                 "vault",
@@ -485,23 +561,14 @@ class CardDropView(discord.ui.View):
                 continue
 
             claimant = item.claimant
-            quantity, was_new = add_to_bag(
+
+            quantity, was_new, total_reward = await asyncio.to_thread(
+                process_claim_rewards,
                 claimant.id,
                 card["id"],
+                rarity_reward,
+                claimant.id == self.owner_id,
             )
-            add_glimmers(claimant.id, rarity_reward)
-
-            record_weekly_progress(
-                claimant.id,
-                "drops_claimed",
-                1,
-            )
-            if was_new:
-                record_weekly_progress(
-                    claimant.id,
-                    "new_cards",
-                    1,
-                )
 
             status = (
                 "You got a new card!"
@@ -512,10 +579,7 @@ class CardDropView(discord.ui.View):
                 )
             )
 
-            total_reward = rarity_reward
             if claimant.id == self.owner_id:
-                add_glimmers(claimant.id, DROP_OWNER_REWARD)
-                total_reward += DROP_OWNER_REWARD
                 reward_text = (
                     f"-# {rarity} 》 {rarity_reward} + {DROP_OWNER_REWARD} "
                     f"(drop rewards) = {total_reward} {GLIMMER_EMOTE} "
@@ -557,131 +621,160 @@ class CardDropView(discord.ui.View):
         )
 
 
+# ── /drop command ──────────────────────────────────────
+
 class Drop(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        initialize_bag_database()
 
     @app_commands.command(
         name="drop",
         description="Drop three cards from the Magic Cabinet.",
     )
     async def drop(self, interaction: discord.Interaction):
-        cabinet = self.bot.get_cog("cabinet")
+        # Acknowledge immediately before any database checks.
+        await interaction.response.defer()
 
-        if cabinet is None:
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    description=(
-                        "The Magic Cabinet setup is currently unavailable."
-                    ),
-                    color=CABINET_COLOR,
+        try:
+            cabinet = self.bot.get_cog("cabinet")
+
+            if cabinet is None:
+                await interaction.followup.send(
+                    embed=discord.Embed(
+                        description=(
+                            "The Magic Cabinet setup is currently unavailable."
+                        ),
+                        color=CABINET_COLOR,
+                    )
                 )
-            )
-            return
+                return
 
-        if interaction.guild_id is None or interaction.guild is None:
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    description=(
-                        "This command can only be used inside a server."
-                    ),
-                    color=CABINET_COLOR,
+            if interaction.guild_id is None or interaction.guild is None:
+                await interaction.followup.send(
+                    embed=discord.Embed(
+                        description=(
+                            "This command can only be used inside a server."
+                        ),
+                        color=CABINET_COLOR,
+                    )
                 )
-            )
-            return
+                return
 
-        allowed = cabinet.is_drop_channel(
-            interaction.guild_id,
-            interaction.channel_id,
-        )
-
-        if not allowed:
-            channel_mentions = []
-
-            for channel_id in get_saved_drop_channels(
-                interaction.guild_id
-            ):
-                channel = interaction.guild.get_channel(channel_id)
-                if channel is not None:
-                    channel_mentions.append(channel.mention)
-
-            channel_text = (
-                " • ".join(channel_mentions)
-                if channel_mentions
-                else "No configured Drop channels."
+            allowed = await asyncio.to_thread(
+                cabinet.is_drop_channel,
+                interaction.guild_id,
+                interaction.channel_id,
             )
 
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    description=(
-                        "This command can only be used in a configured Drop channel.\n\n"
-                        f"➷ {channel_text}"
-                    ),
-                    color=CABINET_COLOR,
+            if not allowed:
+                saved_channels = await asyncio.to_thread(
+                    get_saved_drop_channels,
+                    interaction.guild_id,
                 )
-            )
-            return
 
-        if not get_player_vaults(interaction.user.id):
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    description=(
-                        "🔒 This vault remains sealed.\n"
-                        "You haven't chosen a Vault yet.\n\n"
-                        "Use `/magic awaken` to begin your Cabinet journey."
+                channel_mentions = []
+
+                for channel_id in saved_channels:
+                    channel = interaction.guild.get_channel(channel_id)
+
+                    if channel is not None:
+                        channel_mentions.append(channel.mention)
+
+                channel_text = (
+                    " • ".join(channel_mentions)
+                    if channel_mentions
+                    else "No configured Drop channels."
+                )
+
+                await interaction.followup.send(
+                    embed=discord.Embed(
+                        description=(
+                            "This command can only be used in a configured Drop channel.\n\n"
+                            f"➷ {channel_text}"
+                        ),
+                        color=CABINET_COLOR,
+                    )
+                )
+                return
+
+            selected_vaults = await asyncio.to_thread(
+                get_player_vaults,
+                interaction.user.id,
+            )
+
+            if not selected_vaults:
+                await interaction.followup.send(
+                    embed=discord.Embed(
+                        description=(
+                            "🔒 This vault remains sealed.\n"
+                            "You haven't chosen a Vault yet.\n\n"
+                            "Use `/magic awaken` to begin your Cabinet journey."
+                        ),
+                        color=CABINET_COLOR,
                     ),
-                    color=CABINET_COLOR,
+                    ephemeral=True,
+                )
+                return
+
+            cards = choose_drop_cards()
+
+            owner_card_ids = await asyncio.to_thread(
+                get_owned_card_ids,
+                interaction.user.id,
+            )
+
+            card_information = "\n\n".join(
+                format_card(
+                    card,
+                    owner_card_ids,
+                    position,
+                )
+                for position, card in enumerate(cards, start=1)
+            )
+
+            card_strip = await create_card_strip(cards)
+
+            file = discord.File(
+                card_strip,
+                filename="cabinet_drop.png",
+            )
+
+            embed = discord.Embed(
+                description=(
+                    "╭─ ⋆⋅☆⋅⋆ ─╮\n"
+                    "**This drop is active for 20 seconds.**\n"
+                    "Unlimited players may participate, but the "
+                    "drop owner's authority stays put.\n"
+                    "╰─ ⋆⋅☆⋅⋆ ─╯\n\n"
+                    "-# ✦ Select a card before the 20 seconds end.\n"
+                    f"-# {OWNER_EMOTE} = already exist in the drop owner's Bag\n\n"
+                    f"{card_information}"
                 ),
+                color=CABINET_COLOR,
+            )
+
+            embed.set_image(url="attachment://cabinet_drop.png")
+
+            view = CardDropView(cards, interaction.user.id)
+
+            message = await interaction.followup.send(
+                content=(
+                    f"**Oh {interaction.user.mention} is dropping! Attention!**"
+                ),
+                embed=embed,
+                file=file,
+                view=view,
+                wait=True,
+            )
+
+            view.message = message
+
+        except Exception:
+            await interaction.followup.send(
+                "The Cabinet could not start this drop. Please try again.",
                 ephemeral=True,
             )
-            return
-
-        await interaction.response.defer()
-        cards = choose_drop_cards()
-
-        card_information = "\n\n".join(
-            format_card(
-                card,
-                interaction.user.id,
-                position,
-            )
-            for position, card in enumerate(cards, start=1)
-        )
-
-        card_strip = await create_card_strip(cards)
-        file = discord.File(
-            card_strip,
-            filename="cabinet_drop.png",
-        )
-
-        embed = discord.Embed(
-            description=(
-                "╭─ ⋆⋅☆⋅⋆ ─╮\n"
-                "**This drop is active for 20 seconds.**\n"
-                "Unlimited players may participate, but the "
-                "drop owner's authority stays put.\n"
-                "╰─ ⋆⋅☆⋅⋆ ─╯\n\n"
-                "-# ✦ Select a card before the 20 seconds end.\n"
-                f"-# {OWNER_EMOTE} = already exist in the drop owner's Bag\n\n"
-                f"{card_information}"
-            ),
-            color=CABINET_COLOR,
-        )
-        embed.set_image(url="attachment://cabinet_drop.png")
-
-        view = CardDropView(cards, interaction.user.id)
-        message = await interaction.followup.send(
-            content=(
-                f"**Oh {interaction.user.mention} is dropping! Attention!**"
-            ),
-            embed=embed,
-            file=file,
-            view=view,
-            wait=True,
-        )
-        view.message = message
 
 
 async def setup(bot: commands.Bot):
