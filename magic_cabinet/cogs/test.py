@@ -1,12 +1,13 @@
 
 """Moderator-only Magic Cabinet testing commands."""
 
+import asyncio
+
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from magic_cabinet.cogs.rewards import add_blind_boxes
-from magic_cabinet.database import initialize_database
 
 
 MODERATOR_IDS = {
@@ -25,7 +26,6 @@ class Test(commands.GroupCog, name="test"):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        initialize_database()
 
     async def interaction_check(
         self,
@@ -52,19 +52,31 @@ class Test(commands.GroupCog, name="test"):
         self,
         interaction: discord.Interaction,
     ):
-        add_blind_boxes(interaction.user.id, 1)
+        await interaction.response.defer(ephemeral=True, thinking=True)
 
-        await interaction.response.send_message(
-            embed=discord.Embed(
-                description=(
-                    "✦ **TEST**\n\n"
-                    "📦 **1 Blind Box added.**\n\n"
-                    "-# You can now use `/blindbox`."
-                ),
-                color=EMBED_COLOR,
-            ),
-            ephemeral=True,
-        )
+        try:
+            await asyncio.to_thread(
+                add_blind_boxes,
+                interaction.user.id,
+                1,
+            )
+
+            await interaction.edit_original_response(
+                embed=discord.Embed(
+                    description=(
+                        "✦ **TEST**\n\n"
+                        "📦 **1 Blind Box added.**\n\n"
+                        "-# You can now use `/blindbox`."
+                    ),
+                    color=EMBED_COLOR,
+                )
+            )
+
+        except Exception:
+            await interaction.edit_original_response(
+                content="Something went wrong while adding the test Blind Box. Please try again.",
+                embed=None,
+            )
 
 
 async def setup(bot: commands.Bot):
