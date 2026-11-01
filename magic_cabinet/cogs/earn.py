@@ -1,6 +1,7 @@
 
 """Magic Cabinet earn command."""
 
+import asyncio
 from datetime import datetime, timezone
 
 import discord
@@ -134,54 +135,103 @@ def reset_daily_earnings_if_needed(user_id: int):
             )
 
 
+def process_earn(user_id: int, now: datetime):
+    if not is_registered(user_id):
+        return {"status": "not_registered"}
+
+    reset_daily_earnings_if_needed(user_id)
+
+    data = get_earn_data(user_id)
+
+    last_earn_at = data["last_earn_at"]
+    earning_amount = data["daily_earnings"]
+
+    if last_earn_at:
+        last_earn = datetime.fromisoformat(last_earn_at)
+
+        if last_earn.tzinfo is None:
+            last_earn = last_earn.replace(tzinfo=timezone.utc)
+
+        elapsed = (now - last_earn).total_seconds()
+
+        if elapsed < COOLDOWN_SECONDS:
+            remaining = int(COOLDOWN_SECONDS - elapsed)
+
+            return {
+                "status": "cooldown",
+                "remaining": remaining,
+            }
+
+    new_balance = add_glimmers(user_id, earning_amount)
+
+    record_weekly_progress(
+        user_id,
+        "glimmers_earned",
+        earning_amount,
+    )
+
+    next_amount = earning_amount + EARNING_INCREASE
+
+    with get_connection() as connection:
+        connection.execute(
+            """
+            UPDATE earn_data
+            SET last_earn_at = ?,
+                daily_earnings = ?
+            WHERE user_id = ?
+            """,
+            (now.isoformat(), next_amount, user_id),
+        )
+
+    return {
+        "status": "success",
+        "earning_amount": earning_amount,
+        "new_balance": new_balance,
+    }
+
+
 class Earn(commands.Cog):
     """Magic Cabinet earning commands."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        initialize_earn_database()
 
     @app_commands.command(
         name="earn",
         description="Earn hourly Glimmers.",
     )
     async def earn(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True)
+
         user_id = interaction.user.id
-
-        if not is_registered(user_id):
-            embed = discord.Embed(
-                description=(
-                    "You haven't awakened your Cabinet yet.\n\n"
-                    "-# ✦ Use `/magic awaken` to begin."
-                ),
-                color=EMBED_COLOR,
-            )
-
-            await interaction.response.send_message(
-                embed=embed,
-                ephemeral=True,
-            )
-            return
-
-        reset_daily_earnings_if_needed(user_id)
-
-        data = get_earn_data(user_id)
-
-        last_earn_at = data["last_earn_at"]
-        earning_amount = data["daily_earnings"]
-
         now = datetime.now(timezone.utc)
 
-        if last_earn_at:
-            last_earn = datetime.fromisoformat(last_earn_at)
+        try:
+            result = await asyncio.to_thread(
+                process_earn,
+                user_id,
+                now,
+            )
 
-            if last_earn.tzinfo is None:
-                last_earn = last_earn.replace(tzinfo=timezone.utc)
+            if result["status"] == "not_registered":
+                await interaction.delete_original_response()
 
-            elapsed = (now - last_earn).total_seconds()
+                embed = discord.Embed(
+                    description=(
+                        "You haven't awakened your Cabinet yet.\n\n"
+                        "-# ✦ Use `/magic awaken` to begin."
+                    ),
+                    color=EMBED_COLOR,
+                )
 
-            if elapsed < COOLDOWN_SECONDS:
-                remaining = int(COOLDOWN_SECONDS - elapsed)
+                await interaction.followup.send(
+                    embed=embed,
+                    ephemeral=True,
+                )
+                return
+
+            if result["status"] == "cooldown":
+                remaining = result["remaining"]
 
                 hours = remaining // 3600
                 minutes = (remaining % 3600) // 60
@@ -190,6 +240,8 @@ class Earn(commands.Cog):
                     cooldown_text = f"{hours}h {minutes}m"
                 else:
                     cooldown_text = f"{minutes}m"
+
+                await interaction.delete_original_response()
 
                 embed = discord.Embed(
                     description=(
@@ -200,47 +252,36 @@ class Earn(commands.Cog):
                     color=EMBED_COLOR,
                 )
 
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     embed=embed,
                     ephemeral=True,
                 )
                 return
 
-        new_balance = add_glimmers(user_id, earning_amount)
+            earning_amount = result["earning_amount"]
+            new_balance = result["new_balance"]
 
-        record_weekly_progress(
-            user_id,
-            "glimmers_earned",
-            earning_amount,
-        )
-
-        next_amount = earning_amount + EARNING_INCREASE
-
-        with get_connection() as connection:
-            connection.execute(
-                """
-                UPDATE earn_data
-                SET last_earn_at = ?,
-                    daily_earnings = ?
-                WHERE user_id = ?
-                """,
-                (now.isoformat(), next_amount, user_id),
+            embed = discord.Embed(
+                description=(
+                    "╭────────────── ✦ ──────────────╮\n"
+                    f"You earned **{earning_amount}** "
+                    f"{GLIMMER_EMOTE} Glimmers!\n\n"
+                    f"**New balance:** {new_balance:,} "
+                    f"{GLIMMER_EMOTE}\n\n"
+                    "-# ✦ Come back after 1 hour to `/earn` again."
+                ),
+                color=EMBED_COLOR,
             )
 
-        embed = discord.Embed(
-            description=(
-                "╭────────────── ✦ ──────────────╮\n"
-                f"You earned **{earning_amount}** "
-                f"{GLIMMER_EMOTE} Glimmers!\n\n"
-                f"**New balance:** {new_balance:,} "
-                f"{GLIMMER_EMOTE}\n\n"
-                "-# ✦ Come back after 1 hour to `/earn` again."
-            ),
-            color=EMBED_COLOR,
-        )
+            await interaction.edit_original_response(embed=embed)
 
-        await interaction.response.send_message(embed=embed)
+        except Exception:
+            await interaction.edit_original_response(
+                content="Something went wrong while processing your earnings. Please try again.",
+                embed=None,
+            )
 
 
 async def setup(bot: commands.Bot):
+    await asyncio.to_thread(initialize_earn_database)
     await bot.add_cog(Earn(bot))
