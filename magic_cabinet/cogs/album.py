@@ -1,6 +1,6 @@
-
 """Magic Cabinet personal album."""
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -75,23 +75,8 @@ def get_collection_vault(collection):
 
 # ── Album database ─────────────────────────────────────
 
-def ensure_album_table():
-    with get_connection() as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS collection_rewards (
-                user_id INTEGER NOT NULL,
-                collection_id TEXT NOT NULL,
-                claimed INTEGER NOT NULL DEFAULT 0,
-                claimed_at TEXT,
-                PRIMARY KEY (user_id, collection_id)
-            )
-            """
-        )
-
-
 def get_player_progress(user_id):
-    ensure_album_table()
+    """Fetch album ownership and claimed rewards in one database connection."""
 
     with get_connection() as connection:
         rows = connection.execute(
@@ -118,6 +103,8 @@ def get_player_progress(user_id):
     return owned_ids, claimed_collections
 
 
+# ── Collection progress ─────────────────────────────────
+
 def get_progress(collection_id, owned_ids, claimed_collections):
     collection_cards = [
         card for card in ALL_CARDS
@@ -143,8 +130,8 @@ def get_progress(collection_id, owned_ids, claimed_collections):
 
 # ── Album embed ────────────────────────────────────────
 
-def build_album_embed(user, page, collections):
-    owned_ids, claimed_collections = get_player_progress(user.id)
+def build_album_embed(user, page, collections, progress_data):
+    owned_ids, claimed_collections = progress_data
 
     total_pages = max(1, (len(collections) + PAGE_SIZE - 1) // PAGE_SIZE)
     page = max(0, min(page, total_pages - 1))
@@ -235,12 +222,22 @@ class AlbumSearchModal(discord.ui.Modal, title="Search Your Album"):
         self.album_view.page = index // PAGE_SIZE
         self.album_view.update_buttons()
 
-        await interaction.response.edit_message(
-            embed=build_album_embed(
-                interaction.user,
-                self.album_view.page,
-                self.album_view.collections,
-            ),
+        await interaction.response.defer()
+
+        progress_data = await asyncio.to_thread(
+            get_player_progress,
+            interaction.user.id,
+        )
+
+        embed = build_album_embed(
+            interaction.user,
+            self.album_view.page,
+            self.album_view.collections,
+            progress_data,
+        )
+
+        await interaction.edit_original_response(
+            embed=embed,
             view=self.album_view,
         )
 
@@ -285,12 +282,22 @@ class AlbumView(discord.ui.View):
         self.page -= 1
         self.update_buttons()
 
-        await interaction.response.edit_message(
-            embed=build_album_embed(
-                interaction.user,
-                self.page,
-                self.collections,
-            ),
+        await interaction.response.defer()
+
+        progress_data = await asyncio.to_thread(
+            get_player_progress,
+            interaction.user.id,
+        )
+
+        embed = build_album_embed(
+            interaction.user,
+            self.page,
+            self.collections,
+            progress_data,
+        )
+
+        await interaction.edit_original_response(
+            embed=embed,
             view=self,
         )
 
@@ -307,12 +314,22 @@ class AlbumView(discord.ui.View):
         self.page += 1
         self.update_buttons()
 
-        await interaction.response.edit_message(
-            embed=build_album_embed(
-                interaction.user,
-                self.page,
-                self.collections,
-            ),
+        await interaction.response.defer()
+
+        progress_data = await asyncio.to_thread(
+            get_player_progress,
+            interaction.user.id,
+        )
+
+        embed = build_album_embed(
+            interaction.user,
+            self.page,
+            self.collections,
+            progress_data,
+        )
+
+        await interaction.edit_original_response(
+            embed=embed,
             view=self,
         )
 
@@ -341,27 +358,42 @@ class Album(commands.Cog):
         description="View your personal collection progress.",
     )
     async def album(self, interaction: discord.Interaction):
-        collections = load_collections()
+        await interaction.response.defer(thinking=True)
 
-        if not collections:
-            await interaction.response.send_message(
-                "The Cabinet's collection data could not be found.",
-                ephemeral=True,
+        try:
+            collections = await asyncio.to_thread(load_collections)
+
+            if not collections:
+                await interaction.followup.send(
+                    "The Cabinet's collection data could not be found.",
+                    ephemeral=True,
+                )
+                return
+
+            progress_data = await asyncio.to_thread(
+                get_player_progress,
+                interaction.user.id,
             )
-            return
 
-        ensure_album_table()
+            view = AlbumView(interaction.user.id, collections)
 
-        view = AlbumView(interaction.user.id, collections)
-
-        await interaction.response.send_message(
-            embed=build_album_embed(
+            embed = build_album_embed(
                 interaction.user,
                 view.page,
                 collections,
-            ),
-            view=view,
-        )
+                progress_data,
+            )
+
+            await interaction.followup.send(
+                embed=embed,
+                view=view,
+            )
+
+        except Exception:
+            await interaction.followup.send(
+                "The Cabinet could not load your album. Please try again.",
+                ephemeral=True,
+            )
 
 
 async def setup(bot):
