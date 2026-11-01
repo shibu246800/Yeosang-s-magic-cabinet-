@@ -1,6 +1,8 @@
 
 """Magic Cabinet profile command."""
 
+import asyncio
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -38,69 +40,38 @@ PROFILE_EMOTES = {
 VAULT_ORDER = ["BB", "GG", "BG"]
 
 
-def initialize_profile_database():
-    """Create profile tables in the shared database."""
+def get_profile_data(user_id: int) -> dict:
+    """Fetch all profile information using one database connection."""
 
     with get_connection() as connection:
-        connection.execute("""
-            CREATE TABLE IF NOT EXISTS player_legendary (
-                user_id INTEGER NOT NULL,
-                collection_id TEXT NOT NULL,
-                legendary_id TEXT NOT NULL,
-                claimed_at TEXT,
-                PRIMARY KEY (user_id, collection_id)
-            )
-        """)
-
-        connection.execute("""
-            CREATE TABLE IF NOT EXISTS collection_rewards (
-                user_id INTEGER NOT NULL,
-                collection_id TEXT NOT NULL,
-                claimed INTEGER NOT NULL DEFAULT 0,
-                claimed_at TEXT,
-                PRIMARY KEY (user_id, collection_id)
-            )
-        """)
-
-
-def get_player_vaults(user_id: int) -> list[str]:
-    with get_connection() as connection:
-        rows = connection.execute(
-            "SELECT vault FROM player_vaults WHERE user_id = ?",
+        vault_rows = connection.execute(
+            """
+            SELECT vault
+            FROM player_vaults
+            WHERE user_id = ?
+            """,
             (user_id,),
         ).fetchall()
 
-    selected = {row["vault"] for row in rows}
-    return [vault for vault in VAULT_ORDER if vault in selected]
-
-
-def get_glimmers(user_id: int) -> int:
-    with get_connection() as connection:
-        row = connection.execute(
-            "SELECT glimmers FROM balances WHERE user_id = ?",
+        glimmer_row = connection.execute(
+            """
+            SELECT glimmers
+            FROM balances
+            WHERE user_id = ?
+            """,
             (user_id,),
         ).fetchone()
 
-    return int(row["glimmers"]) if row else 0
-
-
-def get_completed_collections(user_id: int) -> int:
-    with get_connection() as connection:
-        row = connection.execute(
+        completed_row = connection.execute(
             """
-            SELECT COUNT(*)
+            SELECT COUNT(*) AS total
             FROM collection_rewards
             WHERE user_id = ? AND claimed = 1
             """,
             (user_id,),
         ).fetchone()
 
-    return int(row[0]) if row else 0
-
-
-def get_player_legendary(user_id: int) -> list[tuple[str, str]]:
-    with get_connection() as connection:
-        rows = connection.execute(
+        legendary_rows = connection.execute(
             """
             SELECT collection_id, legendary_id
             FROM player_legendary
@@ -110,15 +81,7 @@ def get_player_legendary(user_id: int) -> list[tuple[str, str]]:
             (user_id,),
         ).fetchall()
 
-    return [
-        (row["collection_id"], row["legendary_id"])
-        for row in rows
-    ]
-
-
-def get_badges(user_id: int) -> list[tuple[str, str | None]]:
-    with get_connection() as connection:
-        rows = connection.execute(
+        badge_rows = connection.execute(
             """
             SELECT badge_name, badge_emote
             FROM player_badges
@@ -128,12 +91,7 @@ def get_badges(user_id: int) -> list[tuple[str, str | None]]:
             (user_id,),
         ).fetchall()
 
-    return [(row["badge_name"], row["badge_emote"]) for row in rows]
-
-
-def get_top_achievements(user_id: int) -> list[tuple[str, int]]:
-    with get_connection() as connection:
-        rows = connection.execute(
+        achievement_rows = connection.execute(
             """
             SELECT achievement_name, global_rank
             FROM player_achievements
@@ -144,10 +102,30 @@ def get_top_achievements(user_id: int) -> list[tuple[str, int]]:
             (user_id,),
         ).fetchall()
 
-    return [
-        (row["achievement_name"], row["global_rank"])
-        for row in rows
-    ]
+    selected_vaults = {
+        row["vault"] for row in vault_rows
+    }
+
+    return {
+        "vaults": [
+            vault for vault in VAULT_ORDER
+            if vault in selected_vaults
+        ],
+        "glimmers": int(glimmer_row["glimmers"]) if glimmer_row else 0,
+        "completed": int(completed_row["total"]) if completed_row else 0,
+        "legendary": [
+            (row["collection_id"], row["legendary_id"])
+            for row in legendary_rows
+        ],
+        "badges": [
+            (row["badge_name"], row["badge_emote"])
+            for row in badge_rows
+        ],
+        "achievements": [
+            (row["achievement_name"], row["global_rank"])
+            for row in achievement_rows
+        ],
+    }
 
 
 def format_vaults(vaults: list[str]) -> str:
@@ -182,13 +160,18 @@ def format_achievements(
     )
 
 
-def build_profile_content(user: discord.User) -> discord.Embed:
-    vaults = get_player_vaults(user.id)
-    glimmers = get_glimmers(user.id)
-    completed = get_completed_collections(user.id)
-    legendary = get_player_legendary(user.id)
-    badges = get_badges(user.id)
-    achievements = get_top_achievements(user.id)
+def build_profile_content(
+    user: discord.User,
+    data: dict,
+) -> discord.Embed:
+    """Build the profile embed using already-fetched data."""
+
+    vaults = data["vaults"]
+    glimmers = data["glimmers"]
+    completed = data["completed"]
+    legendary = data["legendary"]
+    badges = data["badges"]
+    achievements = data["achievements"]
 
     description = (
         f"{PROFILE_EMOTES['username']} **Username**\n"
@@ -227,19 +210,21 @@ def build_profile_content(user: discord.User) -> discord.Embed:
         description=description,
         color=EMBED_COLOR,
     )
+
     embed.set_author(
         name=f"{user.display_name}'s Profile",
         icon_url=user.display_avatar.url,
     )
+
     embed.set_footer(text="Yeosang's Magic Cabinet")
 
     return embed
 
 
 class Profile(commands.Cog):
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        initialize_profile_database()
 
     @app_commands.command(
         name="profile",
@@ -254,13 +239,22 @@ class Profile(commands.Cog):
         user: discord.User | None = None,
     ):
         await interaction.response.defer(thinking=True)
+
         target = user or interaction.user
 
         try:
+            profile_data = await asyncio.to_thread(
+                get_profile_data,
+                target.id,
+            )
+
             header = discord.Embed(color=EMBED_COLOR)
             header.set_image(url=HEADER_URL)
 
-            profile_embed = build_profile_content(target)
+            profile_embed = build_profile_content(
+                target,
+                profile_data,
+            )
 
             divider = discord.Embed(color=EMBED_COLOR)
             divider.set_image(url=DIVIDER_URL)
