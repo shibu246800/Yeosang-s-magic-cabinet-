@@ -1,6 +1,7 @@
 
 """Magic Cabinet booster activation."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 import discord
@@ -48,54 +49,13 @@ BOOSTERS = {
 }
 
 
-def initialize_activate_database():
-    """Create or update the Turso booster ticket table."""
+def get_boost_data(user_id: int) -> dict:
+    """Fetch registration, active boosters and available tickets."""
+
+    now = datetime.now(timezone.utc).isoformat()
 
     with get_connection() as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS booster_tickets (
-                ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                booster_id TEXT NOT NULL,
-                received_at TEXT NOT NULL,
-                activated_at TEXT,
-                expires_at TEXT,
-                uses_remaining INTEGER,
-                source TEXT
-            )
-            """
-        )
-
-        columns = {
-            row["name"]
-            for row in connection.execute(
-                "PRAGMA table_info(booster_tickets)"
-            ).fetchall()
-        }
-
-        if "uses_remaining" not in columns:
-            connection.execute(
-                """
-                ALTER TABLE booster_tickets
-                ADD COLUMN uses_remaining INTEGER
-                """
-            )
-
-        if "source" not in columns:
-            connection.execute(
-                """
-                ALTER TABLE booster_tickets
-                ADD COLUMN source TEXT
-                """
-            )
-
-
-def is_registered(user_id: int) -> bool:
-    """Check whether the player has awakened their Cabinet."""
-
-    with get_connection() as connection:
-        row = connection.execute(
+        registered = connection.execute(
             """
             SELECT user_id
             FROM players
@@ -104,32 +64,14 @@ def is_registered(user_id: int) -> bool:
             (user_id,),
         ).fetchone()
 
-    return row is not None
+        if registered is None:
+            return {
+                "registered": False,
+                "active": [],
+                "tickets": [],
+            }
 
-
-def get_available_tickets(user_id: int):
-    """Return the player's unused booster tickets."""
-
-    with get_connection() as connection:
-        return connection.execute(
-            """
-            SELECT ticket_id, booster_id, received_at
-            FROM booster_tickets
-            WHERE user_id = ?
-            AND activated_at IS NULL
-            ORDER BY ticket_id ASC
-            """,
-            (user_id,),
-        ).fetchall()
-
-
-def get_active_boosters(user_id: int):
-    """Return the player's currently active boosters."""
-
-    now = datetime.now(timezone.utc).isoformat()
-
-    with get_connection() as connection:
-        return connection.execute(
+        active_rows = connection.execute(
             """
             SELECT ticket_id, booster_id, expires_at, uses_remaining
             FROM booster_tickets
@@ -140,6 +82,45 @@ def get_active_boosters(user_id: int):
             """,
             (user_id, now),
         ).fetchall()
+
+        active = [
+            (
+                row["ticket_id"],
+                row["booster_id"],
+                row["expires_at"],
+                row["uses_remaining"],
+            )
+            for row in active_rows
+        ]
+
+        tickets = []
+
+        if not active:
+            ticket_rows = connection.execute(
+                """
+                SELECT ticket_id, booster_id, received_at
+                FROM booster_tickets
+                WHERE user_id = ?
+                AND activated_at IS NULL
+                ORDER BY ticket_id ASC
+                """,
+                (user_id,),
+            ).fetchall()
+
+            tickets = [
+                (
+                    row["ticket_id"],
+                    row["booster_id"],
+                    row["received_at"],
+                )
+                for row in ticket_rows
+            ]
+
+    return {
+        "registered": True,
+        "active": active,
+        "tickets": tickets,
+    }
 
 
 def activate_ticket(
@@ -186,7 +167,6 @@ class Activate(commands.GroupCog, name="activate"):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        initialize_activate_database()
 
     @app_commands.command(
         name="boost",
@@ -195,167 +175,187 @@ class Activate(commands.GroupCog, name="activate"):
     async def boost(self, interaction: discord.Interaction):
         """Activate the player's next available booster ticket."""
 
+        await interaction.response.defer(thinking=True)
+
         user_id = interaction.user.id
 
-        if not is_registered(user_id):
-            embed = discord.Embed(
-                description=(
-                    "✦ ── ⋆⋅☆⋅⋆ ── ✦\n\n"
-                    "You haven't awakened your Cabinet yet.\n\n"
-                    "✧ Use `/magic awaken` to begin.\n\n"
-                    "✦ ── ⋆⋅☆⋅⋆ ── ✦"
-                ),
-                color=EMBED_COLOR,
+        try:
+            data = await asyncio.to_thread(
+                get_boost_data,
+                user_id,
             )
 
-            await interaction.response.send_message(
-                embed=embed,
-                ephemeral=True,
-            )
-            return
-
-        active_boosters = get_active_boosters(user_id)
-
-        if active_boosters:
-            lines = []
-
-            for _, booster_id, expires_at, uses_remaining in active_boosters:
-                booster = BOOSTERS.get(booster_id)
-
-                if booster is None:
-                    continue
-
-                expiry = datetime.fromisoformat(expires_at)
-                remaining = expiry - datetime.now(timezone.utc)
-
-                hours = max(
-                    0,
-                    int(remaining.total_seconds()) // 3600,
-                )
-                minutes = max(
-                    0,
-                    (int(remaining.total_seconds()) % 3600) // 60,
-                )
-
-                usage = (
-                    "∞"
-                    if uses_remaining is None
-                    else str(uses_remaining)
-                )
-
-                lines.append(
-                    f"{BOOSTER_EMOTE} **{booster['name']}**\n"
-                    f"-# ✦ {hours}h {minutes}m remaining • "
-                    f"Uses: **{usage}**"
-                )
-
-            if lines:
+            if not data["registered"]:
                 embed = discord.Embed(
                     description=(
-                        "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
-                        "You already have an active booster.\n\n"
-                        + "\n\n".join(lines)
-                        + "\n\n"
-                        "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
+                        "✦ ── ⋆⋅☆⋅⋆ ── ✦\n\n"
+                        "You haven't awakened your Cabinet yet.\n\n"
+                        "✧ Use `/magic awaken` to begin.\n\n"
+                        "✦ ── ⋆⋅☆⋅⋆ ── ✦"
                     ),
                     color=EMBED_COLOR,
                 )
 
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     embed=embed,
                     ephemeral=True,
                 )
                 return
 
-        tickets = get_available_tickets(user_id)
+            active_boosters = data["active"]
 
-        if not tickets:
+            if active_boosters:
+                lines = []
+
+                for _, booster_id, expires_at, uses_remaining in active_boosters:
+                    booster = BOOSTERS.get(booster_id)
+
+                    if booster is None:
+                        continue
+
+                    expiry = datetime.fromisoformat(expires_at)
+                    remaining = expiry - datetime.now(timezone.utc)
+
+                    hours = max(
+                        0,
+                        int(remaining.total_seconds()) // 3600,
+                    )
+                    minutes = max(
+                        0,
+                        (int(remaining.total_seconds()) % 3600) // 60,
+                    )
+
+                    usage = (
+                        "∞"
+                        if uses_remaining is None
+                        else str(uses_remaining)
+                    )
+
+                    lines.append(
+                        f"{BOOSTER_EMOTE} **{booster['name']}**\n"
+                        f"-# ✦ {hours}h {minutes}m remaining • "
+                        f"Uses: **{usage}**"
+                    )
+
+                if lines:
+                    embed = discord.Embed(
+                        description=(
+                            "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
+                            "You already have an active booster.\n\n"
+                            + "\n\n".join(lines)
+                            + "\n\n"
+                            "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
+                        ),
+                        color=EMBED_COLOR,
+                    )
+
+                    await interaction.followup.send(
+                        embed=embed,
+                        ephemeral=True,
+                    )
+                    return
+
+            tickets = data["tickets"]
+
+            if not tickets:
+                embed = discord.Embed(
+                    description=(
+                        "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
+                        f"{BOOSTER_EMOTE} **No Booster Tickets**\n\n"
+                        "You don't have a Booster Ticket waiting.\n\n"
+                        f"✦ Earn one from `/daily` or visit "
+                        "`/booster shop` to get another.\n\n"
+                        "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
+                    ),
+                    color=EMBED_COLOR,
+                )
+
+                await interaction.followup.send(
+                    embed=embed,
+                    ephemeral=True,
+                )
+                return
+
+            ticket_id, booster_id, _ = tickets[0]
+            booster = BOOSTERS.get(booster_id)
+
+            if booster is None:
+                embed = discord.Embed(
+                    description=(
+                        "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
+                        "This Booster Ticket could not be identified.\n\n"
+                        "✦ Please try another ticket.\n\n"
+                        "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
+                    ),
+                    color=EMBED_COLOR,
+                )
+
+                await interaction.followup.send(
+                    embed=embed,
+                    ephemeral=True,
+                )
+                return
+
+            expires_at = await asyncio.to_thread(
+                activate_ticket,
+                ticket_id,
+                user_id,
+                booster_id,
+                booster["uses"],
+            )
+
+            if expires_at is None:
+                embed = discord.Embed(
+                    description=(
+                        "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
+                        "That Booster Ticket is no longer available.\n\n"
+                        "✧ Please use `/activate boost` again.\n\n"
+                        "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
+                    ),
+                    color=EMBED_COLOR,
+                )
+
+                await interaction.followup.send(
+                    embed=embed,
+                    ephemeral=True,
+                )
+                return
+
+            if booster["uses"] is None:
+                usage_text = (
+                    "Unlimited uses during the 24-hour activation."
+                )
+            else:
+                usage_text = (
+                    f"**{booster['uses']}** use"
+                    f"{'s' if booster['uses'] != 1 else ''} available."
+                )
+
             embed = discord.Embed(
                 description=(
                     "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
-                    f"{BOOSTER_EMOTE} **No Booster Tickets**\n\n"
-                    "You don't have a Booster Ticket waiting.\n\n"
-                    f"✦ Earn one from `/daily` or visit "
-                    "`/booster shop` to get another.\n\n"
+                    f"{BOOSTER_EMOTE} **{booster['name']} ACTIVATED**\n\n"
+                    f"✧ {booster['description']}\n\n"
+                    f"{GLIMMER_EMOTE} **Duration**\n"
+                    "✦ Active for **24 hours**.\n\n"
+                    f"✧ **{usage_text}**\n\n"
+                    "-# ✦ Your Booster Ticket has been consumed.\n"
+                    "-# ✧ The effect begins now.\n\n"
                     "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
                 ),
                 color=EMBED_COLOR,
             )
 
-            await interaction.response.send_message(
-                embed=embed,
+            await interaction.followup.send(embed=embed)
+
+        except Exception as error:
+            print(f"[BOOSTER ACTIVATION ERROR] {error!r}")
+
+            await interaction.followup.send(
+                "The Booster Ticket could not be activated. "
+                "Please try again later.",
                 ephemeral=True,
             )
-            return
-
-        ticket_id, booster_id, _ = tickets[0]
-        booster = BOOSTERS.get(booster_id)
-
-        if booster is None:
-            embed = discord.Embed(
-                description=(
-                    "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
-                    "This Booster Ticket could not be identified.\n\n"
-                    "✦ Please try another ticket.\n\n"
-                    "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
-                ),
-                color=EMBED_COLOR,
-            )
-
-            await interaction.response.send_message(
-                embed=embed,
-                ephemeral=True,
-            )
-            return
-
-        expires_at = activate_ticket(
-            ticket_id=ticket_id,
-            user_id=user_id,
-            booster_id=booster_id,
-            uses_remaining=booster["uses"],
-        )
-
-        if expires_at is None:
-            embed = discord.Embed(
-                description=(
-                    "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
-                    "That Booster Ticket is no longer available.\n\n"
-                    "✧ Please use `/activate boost` again.\n\n"
-                    "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
-                ),
-                color=EMBED_COLOR,
-            )
-
-            await interaction.response.send_message(
-                embed=embed,
-                ephemeral=True,
-            )
-            return
-
-        if booster["uses"] is None:
-            usage_text = "Unlimited uses during the 24-hour activation."
-        else:
-            usage_text = (
-                f"**{booster['uses']}** use"
-                f"{'s' if booster['uses'] != 1 else ''} available."
-            )
-
-        embed = discord.Embed(
-            description=(
-                "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
-                f"{BOOSTER_EMOTE} **{booster['name']} ACTIVATED**\n\n"
-                f"✧ {booster['description']}\n\n"
-                f"{GLIMMER_EMOTE} **Duration**\n"
-                "✦ Active for **24 hours**.\n\n"
-                f"✧ **{usage_text}**\n\n"
-                "-# ✦ Your Booster Ticket has been consumed.\n"
-                "-# ✧ The effect begins now.\n\n"
-                "✦ ───── ⋆⋅☆⋅⋆ ───── ✦"
-            ),
-            color=EMBED_COLOR,
-        )
-
-        await interaction.response.send_message(embed=embed)
 
 
 async def setup(bot: commands.Bot):
