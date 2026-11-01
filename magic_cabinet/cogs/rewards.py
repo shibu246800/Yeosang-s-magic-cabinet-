@@ -18,7 +18,7 @@ from magic_cabinet.data.rare import CARDS as RARE_CARDS
 
 EMBED_COLOR = discord.Color.from_str("#4E0017")
 GLIMMER_EMOTE = "<:glimmer:1554842064464773172>"
-MAGIC_EMOTE = "<a:magic:1556011520012460135>"
+MAGIC_EMOTE = "<:magic:1556011745770741832>"
 
 WEEKLY_GRAND_GLIMMERS = 25_000
 
@@ -316,8 +316,7 @@ def claim_rewards(user_id: int):
                 VALUES (?, 1)
                 ON CONFLICT(user_id)
                 DO UPDATE SET quantity = blind_boxes.quantity + 1
-                """,
-                (user_id,),
+                """
             )
 
         connection.execute(
@@ -381,8 +380,8 @@ def build_reward_embed(user: discord.User | discord.Member, pending):
             "",
             "**Weekly Grand Reward**",
             f"+ **{WEEKLY_GRAND_GLIMMERS:,}** {GLIMMER_EMOTE}",
+            f"+ **1 Blind Box** {MAGIC_EMOTE}",
             "+ **1 NEW Epic card**",
-            "+ **1 Blind Box**",
         ])
 
     lines.extend([
@@ -466,7 +465,7 @@ class RewardsView(discord.ui.View):
                 )
 
             if result["blind_boxes"]:
-                lines.append("+ **1 Blind Box** 📦")
+                lines.append(f"+ **1 Blind Box** {MAGIC_EMOTE}")
 
             lines.extend([
                 "",
