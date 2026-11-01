@@ -121,6 +121,7 @@ def reset_daily_earnings_if_needed(user_id: int):
                 """,
                 (user_id, FIRST_EARNING, today),
             )
+
         elif row["reset_date"] != today:
             connection.execute(
                 """
