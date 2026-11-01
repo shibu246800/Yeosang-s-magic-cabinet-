@@ -1,14 +1,13 @@
 
 """Magic Cabinet player registration and vault settings."""
 
-import os
 from datetime import datetime, timezone
 
 import discord
-import psycopg
-from psycopg.rows import dict_row
 from discord import app_commands
 from discord.ext import commands
+
+from magic_cabinet.database import get_connection, initialize_database
 
 
 EMBED_COLOR = discord.Color.from_str("#4E0017")
@@ -23,102 +22,86 @@ VAULT_ORDER = ["BB", "GG", "BG"]
 GLIMMER_EMOTE = "<:glimmer:1554842064464773172>"
 
 
-def get_postgres_connection():
-    database_url = os.getenv("DATABASE_URL")
-
-    if not database_url:
-        raise RuntimeError("DATABASE_URL is not configured.")
-
-    return psycopg.connect(
-        database_url,
-        connect_timeout=10,
-        row_factory=dict_row,
-    )
-
-
 def initialize_magic_database():
-    """PostgreSQL tables are created by the shared database helper."""
-    pass
+    initialize_database()
 
 
 def ensure_player(user_id: int):
-    with get_postgres_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO players (user_id, created_at, vault)
-                VALUES (%s, %s, NULL)
-                ON CONFLICT (user_id) DO NOTHING
-                """,
-                (user_id, datetime.now(timezone.utc).isoformat()),
-            )
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO players (user_id, created_at, vault)
+            VALUES (?, ?, NULL)
+            ON CONFLICT(user_id) DO NOTHING
+            """,
+            (user_id, datetime.now(timezone.utc).isoformat()),
+        )
 
 
 def get_selected_vaults(user_id: int) -> list[str]:
-    with get_postgres_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT vault
-                FROM player_vaults
-                WHERE user_id = %s
-                """,
-                (user_id,),
-            )
-            rows = cursor.fetchall()
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT vault
+            FROM player_vaults
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchall()
 
     selected = {row["vault"] for row in rows}
     return [vault for vault in VAULT_ORDER if vault in selected]
 
 
 def save_vaults(user_id: int, vaults: list[str]):
-    ordered_vaults = [vault for vault in VAULT_ORDER if vault in vaults]
+    ordered_vaults = [
+        vault for vault in VAULT_ORDER
+        if vault in vaults
+    ]
 
     if not ordered_vaults:
         return
 
-    with get_postgres_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO players (user_id, created_at, vault)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (user_id)
-                DO UPDATE SET vault = EXCLUDED.vault
-                """,
-                (
-                    user_id,
-                    datetime.now(timezone.utc).isoformat(),
-                    ordered_vaults[0],
-                ),
-            )
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO players (user_id, created_at, vault)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id)
+            DO UPDATE SET vault = excluded.vault
+            """,
+            (
+                user_id,
+                datetime.now(timezone.utc).isoformat(),
+                ordered_vaults[0],
+            ),
+        )
 
-            cursor.execute(
-                "DELETE FROM player_vaults WHERE user_id = %s",
-                (user_id,),
-            )
+        connection.execute(
+            "DELETE FROM player_vaults WHERE user_id = ?",
+            (user_id,),
+        )
 
-            cursor.executemany(
-                """
-                INSERT INTO player_vaults (user_id, vault)
-                VALUES (%s, %s)
-                ON CONFLICT (user_id, vault) DO NOTHING
-                """,
-                [(user_id, vault) for vault in ordered_vaults],
-            )
+        connection.executemany(
+            """
+            INSERT INTO player_vaults (user_id, vault)
+            VALUES (?, ?)
+            ON CONFLICT(user_id, vault) DO NOTHING
+            """,
+            [(user_id, vault) for vault in ordered_vaults],
+        )
 
 
 def give_starting_glimmers(user_id: int):
-    with get_postgres_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO balances (user_id, glimmers)
-                VALUES (%s, 10000)
-                ON CONFLICT (user_id) DO NOTHING
-                """,
-                (user_id,),
-            )
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO balances (user_id, glimmers)
+            VALUES (?, 10000)
+            ON CONFLICT(user_id) DO NOTHING
+            """,
+            (user_id,),
+        )
 
 
 def format_selected_vaults(vaults: list[str]) -> str:
@@ -152,6 +135,7 @@ class VaultSelectionView(discord.ui.View):
         for item in self.children:
             if isinstance(item, discord.ui.Button):
                 vault = custom_ids.get(item.custom_id)
+
                 if vault:
                     item.style = (
                         discord.ButtonStyle.success
@@ -254,10 +238,13 @@ class VaultSelectionView(discord.ui.View):
                 give_starting_glimmers(self.user_id)
 
         except Exception as error:
-            print(f"[VAULT SAVE] PostgreSQL error: {error}")
+            print(f"[VAULT SAVE] Turso error: {error}")
+
             await interaction.response.send_message(
                 embed=discord.Embed(
-                    description="The Cabinet couldn't save your Vaults. Please try again.",
+                    description=(
+                        "The Cabinet couldn't save your Vaults. Please try again."
+                    ),
                     color=EMBED_COLOR,
                 ),
                 ephemeral=True,
@@ -316,8 +303,10 @@ class Magic(commands.GroupCog, name="magic"):
         try:
             ensure_player(user_id)
             existing_vaults = get_selected_vaults(user_id)
+
         except Exception as error:
-            print(f"[MAGIC AWAKEN] PostgreSQL error: {error}")
+            print(f"[MAGIC AWAKEN] Turso error: {error}")
+
             await interaction.response.send_message(
                 "The Cabinet is temporarily unable to access your records. Please try again.",
                 ephemeral=True,
@@ -338,6 +327,7 @@ class Magic(commands.GroupCog, name="magic"):
                 ),
                 color=EMBED_COLOR,
             )
+
             await interaction.response.send_message(
                 embed=embed,
                 ephemeral=True,
@@ -387,13 +377,11 @@ class Vault(commands.GroupCog, name="vault"):
         user_id = interaction.user.id
 
         try:
-            with get_postgres_connection() as connection:
-                with connection.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT user_id FROM players WHERE user_id = %s",
-                        (user_id,),
-                    )
-                    player = cursor.fetchone()
+            with get_connection() as connection:
+                player = connection.execute(
+                    "SELECT user_id FROM players WHERE user_id = ?",
+                    (user_id,),
+                ).fetchone()
 
             if player is None:
                 await interaction.response.send_message(
@@ -411,7 +399,8 @@ class Vault(commands.GroupCog, name="vault"):
             current_vaults = get_selected_vaults(user_id)
 
         except Exception as error:
-            print(f"[VAULT SETTINGS] PostgreSQL error: {error}")
+            print(f"[VAULT SETTINGS] Turso error: {error}")
+
             await interaction.response.send_message(
                 "The Cabinet is temporarily unable to access your records. Please try again.",
                 ephemeral=True,
@@ -446,5 +435,6 @@ class Vault(commands.GroupCog, name="vault"):
 
 
 async def setup(bot: commands.Bot):
+    initialize_magic_database()
     await bot.add_cog(Magic(bot))
     await bot.add_cog(Vault(bot))
