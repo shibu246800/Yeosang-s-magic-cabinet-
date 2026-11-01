@@ -1,3 +1,6 @@
+
+"""Magic Cabinet personal album."""
+
 import json
 from pathlib import Path
 
@@ -85,7 +88,6 @@ def ensure_album_table():
             )
             """
         )
-        connection.commit()
 
 
 def get_player_progress(user_id):
@@ -128,7 +130,6 @@ def get_progress(collection_id, owned_ids, claimed_collections):
         if str(card.get("id")) in owned_ids
     })
 
-    # Every collection has six base cards.
     owned_count = min(owned_count, 6)
 
     if collection_id in claimed_collections:
@@ -232,6 +233,8 @@ class AlbumSearchModal(discord.ui.Modal, title="Search Your Album"):
             return
 
         self.album_view.page = index // PAGE_SIZE
+        self.album_view.update_buttons()
+
         await interaction.response.edit_message(
             embed=build_album_embed(
                 interaction.user,
@@ -281,6 +284,7 @@ class AlbumView(discord.ui.View):
     ):
         self.page -= 1
         self.update_buttons()
+
         await interaction.response.edit_message(
             embed=build_album_embed(
                 interaction.user,
@@ -302,6 +306,7 @@ class AlbumView(discord.ui.View):
     ):
         self.page += 1
         self.update_buttons()
+
         await interaction.response.edit_message(
             embed=build_album_embed(
                 interaction.user,
@@ -356,7 +361,7 @@ class Album(commands.Cog):
                 collections,
             ),
             view=view,
-      )
+        )
 
 
 async def setup(bot):
