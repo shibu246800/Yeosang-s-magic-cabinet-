@@ -1,11 +1,17 @@
 
-"""Safely copy Magic Cabinet's SQLite tables to PostgreSQL."""
+"""Safely copy Magic Cabinet's SQLite data to Turso."""
 
-from magic_cabinet.database import get_connection
-from magic_cabinet.postgres_database import (
-    get_postgres_connection,
-    initialize_postgres_database,
-)
+from magic_cabinet.database import get_connection as get_turso_connection
+from contextlib import closing
+import os
+import sqlite3
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SQLITE_PATH = Path(
+    os.getenv("DATABASE_PATH", str(PROJECT_ROOT / "cabinet.db"))
+).expanduser().resolve()
 
 TABLES = {
     "drop_channels": [
@@ -27,63 +33,114 @@ TABLES = {
     "player_achievements": [
         "user_id", "achievement_id", "achievement_name", "global_rank",
     ],
+    "player_card_inventory": ["user_id", "card_id", "quantity"],
+    "weekly_challenges": [
+        "user_id", "week_started", "task_data",
+        "guaranteed_claimed", "reward_claimed",
+    ],
+    "weekly_progress": [
+        "user_id", "task_id", "progress", "completed",
+    ],
+    "weekly_notifications": [
+        "id", "user_id", "task_id", "created_at", "sent",
+    ],
+    "weekly_delivery": ["user_id", "guild_id", "channel_id"],
+    "weekly_pending_rewards": [
+        "reward_id", "user_id", "reward_type", "amount",
+        "task_id", "claimed", "created_at",
+    ],
+    "earn_data": ["user_id", "last_claim_at"],
+    "blind_boxes": ["user_id", "quantity"],
+    "collection_rewards": [
+        "user_id", "collection_id", "claimed", "claimed_at",
+    ],
+    "player_legendary": [
+        "user_id", "collection_id", "legendary_id", "claimed_at",
+    ],
+    "booster_activation_log": [
+        "id", "user_id", "ticket_id", "activated_at",
+    ],
 }
 
 
 def migrate_database():
-    initialize_postgres_database()
+    if not SQLITE_PATH.is_file():
+        raise FileNotFoundError(
+            f"Existing SQLite database not found: {SQLITE_PATH}"
+        )
 
-    with get_connection() as sqlite:
+    with closing(sqlite3.connect(str(SQLITE_PATH))) as sqlite:
+        sqlite.row_factory = sqlite3.Row
+
         snapshots = {}
+
         for table, columns in TABLES.items():
+            exists = sqlite.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name=?",
+                (table,),
+            ).fetchone()
+
+            if not exists:
+                print(f"{table}: source table missing; skipped")
+                continue
+
+            actual_columns = {
+                row["name"]
+                for row in sqlite.execute(
+                    f'PRAGMA table_info("{table}")'
+                ).fetchall()
+            }
+
+            missing = set(columns) - actual_columns
+            if missing:
+                raise RuntimeError(
+                    f"{table} is missing SQLite columns: {sorted(missing)}"
+                )
+
             column_sql = ", ".join(f'"{c}"' for c in columns)
             rows = sqlite.execute(
                 f'SELECT {column_sql} FROM "{table}"'
             ).fetchall()
+
             snapshots[table] = [
                 tuple(row[column] for column in columns)
                 for row in rows
             ]
 
-    with get_postgres_connection() as postgres:
-        with postgres.cursor() as cursor:
-            # Safety check: do not merge into populated tables.
-            for table in TABLES:
-                cursor.execute(f'SELECT COUNT(*) FROM "{table}"')
-                count = cursor.fetchone()[0]
-                if count:
-                    raise RuntimeError(
-                        f'"{table}" already has {count} PostgreSQL rows. '
-                        "Migration stopped without inserting records."
-                    )
+    with get_turso_connection() as turso:
+        # Safety check: never merge into populated Turso tables.
+        for table in TABLES:
+            count = turso.execute(
+                f'SELECT COUNT(*) AS total FROM "{table}"'
+            ).fetchone()["total"]
 
-            for table, columns in TABLES.items():
-                rows = snapshots[table]
-                if not rows:
-                    print(f"{table}: 0 rows to copy")
-                    continue
-
-                column_sql = ", ".join(f'"{c}"' for c in columns)
-                placeholders = ", ".join(["%s"] * len(columns))
-                cursor.executemany(
-                    f'INSERT INTO "{table}" ({column_sql}) '
-                    f"VALUES ({placeholders})",
-                    rows,
+            if count:
+                raise RuntimeError(
+                    f"{table} already has {count} Turso rows. "
+                    "Migration stopped without inserting records."
                 )
-                print(f"{table}: copied {len(rows)} rows")
 
-            # Keep future ticket IDs above the copied IDs.
-            cursor.execute("""
-                SELECT setval(
-                    pg_get_serial_sequence('booster_tickets', 'ticket_id'),
-                    COALESCE((SELECT MAX(ticket_id) FROM booster_tickets), 1),
-                    EXISTS (SELECT 1 FROM booster_tickets)
-                )
-            """)
+        for table, columns in TABLES.items():
+            rows = snapshots.get(table, [])
 
-    print("Migration finished. SQLite data was preserved.")
+            if not rows:
+                print(f"{table}: 0 rows to copy")
+                continue
+
+            column_sql = ", ".join(f'"{c}"' for c in columns)
+            placeholders = ", ".join(["?"] * len(columns))
+
+            turso.executemany(
+                f'INSERT INTO "{table}" ({column_sql}) '
+                f"VALUES ({placeholders})",
+                rows,
+            )
+
+            print(f"{table}: copied {len(rows)} rows")
+
+    print("Migration finished. Original SQLite data was preserved.")
 
 
 if __name__ == "__main__":
     migrate_database()
-
