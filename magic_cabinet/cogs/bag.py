@@ -2,13 +2,12 @@
 """Magic Cabinet Bag."""
 
 import math
-import sqlite3
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from magic_cabinet.database import DATABASE_PATH
+from magic_cabinet.database import get_connection
 from magic_cabinet.data.epic import CARDS as EPIC_CARDS
 from magic_cabinet.data.limited import CARDS as LIMITED_CARDS
 from magic_cabinet.data.normal import CARDS as NORMAL_CARDS
@@ -102,8 +101,7 @@ def get_bag_cards(
     The first copy stays in the collection.
     Only copies after the first appear in the Bag.
     """
-    with sqlite3.connect(str(DATABASE_PATH)) as connection:
-        connection.row_factory = sqlite3.Row
+    with get_connection() as connection:
         rows = connection.execute(
             """
             SELECT card_id, quantity
@@ -118,6 +116,7 @@ def get_bag_cards(
         int(row["card_id"]): int(row["quantity"])
         for row in rows
     }
+
     card_data = get_all_card_data()
     cards = []
 
@@ -300,6 +299,7 @@ class BagView(discord.ui.View):
             self.page -= 1
 
         self.update_buttons()
+
         await interaction.response.edit_message(
             embeds=self.get_embeds(interaction.user),
             view=self,
@@ -319,6 +319,7 @@ class BagView(discord.ui.View):
             self.page += 1
 
         self.update_buttons()
+
         await interaction.response.edit_message(
             embeds=self.get_embeds(interaction.user),
             view=self,
