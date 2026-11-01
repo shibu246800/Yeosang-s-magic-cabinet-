@@ -1,16 +1,15 @@
 
 """Magic Cabinet booster system."""
 
-import sqlite3
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from magic_cabinet.database import get_connection
 
-DATABASE = "cabinet.db"
+
 EMBED_COLOR = discord.Color.from_str("#4E0017")
 GLIMMER_EMOTE = "<:glimmer:1554842064464773172>"
 
@@ -70,24 +69,9 @@ BOOSTERS = {
 }
 
 
-@contextmanager
-def get_connection():
-    """Open a SQLite connection and safely close it."""
-    connection = sqlite3.connect(DATABASE)
-    connection.row_factory = sqlite3.Row
-
-    try:
-        yield connection
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        connection.close()
-
-
 def initialize_booster_database():
-    """Create booster tables and indexes in SQLite."""
+    """Create booster tables and indexes in Turso."""
+
     with get_connection() as connection:
         connection.execute(
             """
@@ -116,6 +100,14 @@ def initialize_booster_database():
                 """
                 ALTER TABLE booster_tickets
                 ADD COLUMN source TEXT NOT NULL DEFAULT 'daily'
+                """
+            )
+
+        if "uses_remaining" not in ticket_columns:
+            connection.execute(
+                """
+                ALTER TABLE booster_tickets
+                ADD COLUMN uses_remaining INTEGER
                 """
             )
 
