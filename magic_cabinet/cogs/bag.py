@@ -1,6 +1,6 @@
-
 """Magic Cabinet Bag."""
 
+import asyncio
 import math
 
 import discord
@@ -421,11 +421,19 @@ class SortSelect(discord.ui.Select):
             )
             return
 
+        await interaction.response.defer()
+
         selected = self.values[0]
         view = self.parent_view
 
+        cards = await asyncio.to_thread(
+            get_bag_cards,
+            self.user_id,
+            selected,
+        )
+
         view.filter_name = selected
-        view.cards = get_bag_cards(self.user_id, selected)
+        view.cards = cards
         view.page = 0
         view.update_buttons()
 
@@ -435,7 +443,7 @@ class SortSelect(discord.ui.Select):
                 view=view,
             )
 
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content="✦ Bag filter applied.",
             embed=None,
             view=None,
@@ -487,11 +495,17 @@ class BagSearchModal(discord.ui.Modal):
             )
             return
 
+        await interaction.response.defer(ephemeral=True)
+
         view = self.parent_view
-        view.cards = search_bag_cards(
+
+        cards = await asyncio.to_thread(
+            search_bag_cards,
             self.user_id,
             self.search.value,
         )
+
+        view.cards = cards
         view.page = 0
         view.filter_name = "search"
         view.update_buttons()
@@ -502,7 +516,7 @@ class BagSearchModal(discord.ui.Modal):
                 view=view,
             )
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "✦ Bag search applied.",
             ephemeral=True,
         )
@@ -522,20 +536,33 @@ class Bag(commands.Cog):
         self,
         interaction: discord.Interaction,
     ) -> None:
-        user_id = interaction.user.id
-        cards = get_bag_cards(user_id)
+        await interaction.response.defer(thinking=True)
 
-        view = BagView(
-            user_id=user_id,
-            cards=cards,
-        )
+        try:
+            user_id = interaction.user.id
 
-        await interaction.response.send_message(
-            embeds=view.get_embeds(interaction.user),
-            view=view,
-        )
+            cards = await asyncio.to_thread(
+                get_bag_cards,
+                user_id,
+            )
 
-        view.message = await interaction.original_response()
+            view = BagView(
+                user_id=user_id,
+                cards=cards,
+            )
+
+            await interaction.followup.send(
+                embeds=view.get_embeds(interaction.user),
+                view=view,
+            )
+
+            view.message = await interaction.original_response()
+
+        except Exception:
+            await interaction.followup.send(
+                "✦ The Cabinet could not load your Bag. Please try again.",
+                ephemeral=True,
+            )
 
 
 async def setup(bot: commands.Bot) -> None:
