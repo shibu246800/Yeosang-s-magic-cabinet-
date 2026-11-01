@@ -1,14 +1,14 @@
+
 """Magic Cabinet booster activation."""
 
-import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from magic_cabinet.database import get_connection
 
-DATABASE = "cabinet.db"
 
 EMBED_COLOR = discord.Color.from_str("#4E0017")
 
@@ -49,9 +49,9 @@ BOOSTERS = {
 
 
 def initialize_activate_database():
-    """Create or update the SQLite booster ticket table."""
+    """Create or update the Turso booster ticket table."""
 
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS booster_tickets (
@@ -61,13 +61,14 @@ def initialize_activate_database():
                 received_at TEXT NOT NULL,
                 activated_at TEXT,
                 expires_at TEXT,
-                uses_remaining INTEGER
+                uses_remaining INTEGER,
+                source TEXT
             )
             """
         )
 
         columns = {
-            row[1]
+            row["name"]
             for row in connection.execute(
                 "PRAGMA table_info(booster_tickets)"
             ).fetchall()
@@ -81,11 +82,19 @@ def initialize_activate_database():
                 """
             )
 
+        if "source" not in columns:
+            connection.execute(
+                """
+                ALTER TABLE booster_tickets
+                ADD COLUMN source TEXT
+                """
+            )
+
 
 def is_registered(user_id: int) -> bool:
     """Check whether the player has awakened their Cabinet."""
 
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         row = connection.execute(
             """
             SELECT user_id
@@ -101,7 +110,7 @@ def is_registered(user_id: int) -> bool:
 def get_available_tickets(user_id: int):
     """Return the player's unused booster tickets."""
 
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         return connection.execute(
             """
             SELECT ticket_id, booster_id, received_at
@@ -119,7 +128,7 @@ def get_active_boosters(user_id: int):
 
     now = datetime.now(timezone.utc).isoformat()
 
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         return connection.execute(
             """
             SELECT ticket_id, booster_id, expires_at, uses_remaining
@@ -144,7 +153,7 @@ def activate_ticket(
     now = datetime.now(timezone.utc)
     expires_at = now + BOOSTER_DURATION
 
-    with sqlite3.connect(DATABASE) as connection:
+    with get_connection() as connection:
         cursor = connection.execute(
             """
             UPDATE booster_tickets
@@ -183,10 +192,7 @@ class Activate(commands.GroupCog, name="activate"):
         name="boost",
         description="Activate one of your Booster Tickets.",
     )
-    async def boost(
-        self,
-        interaction: discord.Interaction,
-    ):
+    async def boost(self, interaction: discord.Interaction):
         """Activate the player's next available booster ticket."""
 
         user_id = interaction.user.id
