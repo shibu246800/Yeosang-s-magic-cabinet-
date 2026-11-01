@@ -4,4 +4,4 @@ Flask
 aiohttp
 Pillow
 requests
-psycopg[binary]
+turso_serverless
