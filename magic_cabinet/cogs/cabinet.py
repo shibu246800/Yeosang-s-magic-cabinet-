@@ -44,6 +44,9 @@ class Cabinet(commands.GroupCog, name="cabinet"):
             )
             return
 
+        # Acknowledge Discord before connecting to Turso.
+        await interaction.response.defer()
+
         channels = [
             drop_channel1,
             drop_channel2,
@@ -92,7 +95,7 @@ class Cabinet(commands.GroupCog, name="cabinet"):
         except Exception as error:
             print(f"[CABINET SETUP] Turso error: {error}")
 
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "The Cabinet couldn't save your channels. Please try again later.",
                 ephemeral=True,
             )
@@ -115,7 +118,7 @@ class Cabinet(commands.GroupCog, name="cabinet"):
             color=EMBED_COLOR,
         )
 
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     def is_drop_channel(
         self,
