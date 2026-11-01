@@ -76,6 +76,8 @@ BOOSTERS = [
 
 
 def initialize_daily_database():
+    """Initialize daily rewards using the shared database."""
+
     initialize_database()
 
     with get_connection() as connection:
@@ -88,50 +90,10 @@ def initialize_daily_database():
             """
         )
 
-        # Ensure the booster ticket table exists.
-        # Existing tables are preserved.
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS booster_tickets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                booster_id TEXT NOT NULL,
-                received_at TEXT NOT NULL,
-                activated_at TEXT,
-                expires_at TEXT,
-                uses_remaining INTEGER,
-                source TEXT NOT NULL DEFAULT 'daily'
-            )
-            """
-        )
-
-        # SQLite does not support ADD COLUMN IF NOT EXISTS.
-        columns = {
-            row["name"]
-            for row in connection.execute(
-                "PRAGMA table_info(booster_tickets)"
-            ).fetchall()
-        }
-
-        if "uses_remaining" not in columns:
-            connection.execute(
-                """
-                ALTER TABLE booster_tickets
-                ADD COLUMN uses_remaining INTEGER
-                """
-            )
-
-        if "source" not in columns:
-            connection.execute(
-                """
-                ALTER TABLE booster_tickets
-                ADD COLUMN source TEXT NOT NULL DEFAULT 'daily'
-                """
-            )
-
 
 def is_registered(user_id: int) -> bool:
     """Check the available player registration tables."""
+
     with get_connection() as connection:
         tables = {
             row["name"]
@@ -144,7 +106,6 @@ def is_registered(user_id: int) -> bool:
             ).fetchall()
         }
 
-        # Support either registration table if it exists.
         for table_name in ("players", "player_vaults"):
             if table_name not in tables:
                 continue
@@ -387,7 +348,6 @@ class Daily(commands.Cog):
                 claim["last_claim_at"]
             )
 
-            # Handle older timestamps that may lack timezone data.
             if last_claim.tzinfo is None:
                 last_claim = last_claim.replace(tzinfo=timezone.utc)
 
