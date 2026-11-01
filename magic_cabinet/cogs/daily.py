@@ -1,6 +1,7 @@
 
 """Magic Cabinet daily rewards."""
 
+import asyncio
 import random
 from datetime import datetime, timedelta, timezone
 
@@ -75,6 +76,10 @@ BOOSTERS = [
 ]
 
 
+# ============================================================
+# DATABASE INITIALIZATION
+# ============================================================
+
 def initialize_daily_database():
     """Initialize daily rewards using the shared database."""
 
@@ -90,6 +95,10 @@ def initialize_daily_database():
             """
         )
 
+
+# ============================================================
+# DATABASE HELPERS
+# ============================================================
 
 def is_registered(user_id: int) -> bool:
     """Check the available player registration tables."""
@@ -138,7 +147,7 @@ def is_registered(user_id: int) -> bool:
 
 def get_daily_claim(user_id: int):
     with get_connection() as connection:
-        return connection.execute(
+        row = connection.execute(
             """
             SELECT last_claim_at
             FROM daily_data
@@ -146,6 +155,8 @@ def get_daily_claim(user_id: int):
             """,
             (user_id,),
         ).fetchone()
+
+    return None if row is None else row["last_claim_at"]
 
 
 def get_glimmers(user_id: int) -> int:
@@ -297,6 +308,42 @@ def save_booster_ticket(
         )
 
 
+def process_daily_rewards(
+    user_id: int,
+    card_id,
+    booster_id: str,
+    claim_time: datetime,
+):
+    """Process the existing daily rewards outside Discord's event loop."""
+
+    new_quantity, was_new = add_card_to_bag(
+        user_id,
+        card_id,
+    )
+
+    add_glimmers(
+        user_id,
+        DAILY_GLIMMERS,
+    )
+
+    save_booster_ticket(
+        user_id,
+        booster_id,
+        claim_time,
+    )
+
+    save_daily_claim(
+        user_id,
+        claim_time,
+    )
+
+    return new_quantity, was_new
+
+
+# ============================================================
+# FORMATTING
+# ============================================================
+
 def format_remaining(seconds: int) -> str:
     hours = seconds // 3600
     minutes = (seconds % 3600) // 60
@@ -307,11 +354,14 @@ def format_remaining(seconds: int) -> str:
     return f"{minutes}m"
 
 
+# ============================================================
+# DAILY COMMAND
+# ============================================================
+
 class Daily(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        initialize_daily_database()
 
     @app_commands.command(
         name="daily",
@@ -323,86 +373,110 @@ class Daily(commands.Cog):
     ):
         user_id = interaction.user.id
 
-        if not is_registered(user_id):
-            embed = discord.Embed(
-                description=(
-                    "✦ ────── ⋆⋅☆⋅⋆ ────── ✦\n\n"
-                    "You haven't awakened your Cabinet yet.\n\n"
-                    "✦ Use `/magic awaken` to begin.\n\n"
-                    "✦ ────── ⋆⋅☆⋅⋆ ────── ✦"
-                ),
-                color=EMBED_COLOR,
+        # Acknowledge Discord immediately.
+        await interaction.response.defer(thinking=True)
+
+        try:
+            registered = await asyncio.to_thread(
+                is_registered,
+                user_id,
             )
 
-            await interaction.response.send_message(
-                embed=embed,
-                ephemeral=True,
-            )
-            return
-
-        now = datetime.now(timezone.utc)
-        claim = get_daily_claim(user_id)
-
-        if claim is not None and claim["last_claim_at"]:
-            last_claim = datetime.fromisoformat(
-                claim["last_claim_at"]
-            )
-
-            if last_claim.tzinfo is None:
-                last_claim = last_claim.replace(tzinfo=timezone.utc)
-
-            next_claim = last_claim + timedelta(
-                seconds=DAILY_COOLDOWN
-            )
-
-            remaining_seconds = int(
-                (next_claim - now).total_seconds()
-            )
-
-            if remaining_seconds > 0:
-                remaining = format_remaining(remaining_seconds)
+            if not registered:
+                await interaction.delete_original_response()
 
                 embed = discord.Embed(
                     description=(
                         "✦ ────── ⋆⋅☆⋅⋆ ────── ✦\n\n"
-                        "The Cabinet has already left "
-                        "today's gifts.\n\n"
-                        "Come back when the next day opens.\n\n"
-                        f"✦ ── **{remaining}** remaining ── ✦\n\n"
+                        "You haven't awakened your Cabinet yet.\n\n"
+                        "✦ Use `/magic awaken` to begin.\n\n"
                         "✦ ────── ⋆⋅☆⋅⋆ ────── ✦"
                     ),
                     color=EMBED_COLOR,
                 )
 
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     embed=embed,
                     ephemeral=True,
                 )
                 return
 
-        card = choose_daily_card()
-        booster = choose_booster()
+            now = datetime.now(timezone.utc)
 
-        new_quantity, was_new = add_card_to_bag(
-            user_id,
-            card["id"],
-        )
+            last_claim_at = await asyncio.to_thread(
+                get_daily_claim,
+                user_id,
+            )
 
-        add_glimmers(
-            user_id,
-            DAILY_GLIMMERS,
-        )
+            if last_claim_at:
+                last_claim = datetime.fromisoformat(last_claim_at)
 
-        save_booster_ticket(
-            user_id,
-            booster["id"],
-            now,
-        )
+                if last_claim.tzinfo is None:
+                    last_claim = last_claim.replace(
+                        tzinfo=timezone.utc
+                    )
 
-        save_daily_claim(
-            user_id,
-            now,
-        )
+                next_claim = last_claim + timedelta(
+                    seconds=DAILY_COOLDOWN
+                )
+
+                remaining_seconds = int(
+                    (next_claim - now).total_seconds()
+                )
+
+                if remaining_seconds > 0:
+                    remaining = format_remaining(
+                        remaining_seconds
+                    )
+
+                    await interaction.delete_original_response()
+
+                    embed = discord.Embed(
+                        description=(
+                            "✦ ────── ⋆⋅☆⋅⋆ ────── ✦\n\n"
+                            "The Cabinet has already left "
+                            "today's gifts.\n\n"
+                            "Come back when the next day opens.\n\n"
+                            f"✦ ── **{remaining}** remaining ── ✦\n\n"
+                            "✦ ────── ⋆⋅☆⋅⋆ ────── ✦"
+                        ),
+                        color=EMBED_COLOR,
+                    )
+
+                    await interaction.followup.send(
+                        embed=embed,
+                        ephemeral=True,
+                    )
+                    return
+
+            card = choose_daily_card()
+            booster = choose_booster()
+
+            new_quantity, was_new = await asyncio.to_thread(
+                process_daily_rewards,
+                user_id,
+                card["id"],
+                booster["id"],
+                now,
+            )
+
+        except Exception as error:
+            print(f"[DAILY] Error: {error}")
+
+            try:
+                await interaction.delete_original_response()
+            except discord.HTTPException:
+                pass
+
+            await interaction.followup.send(
+                "The Cabinet couldn't process your daily rewards. Please try again later.",
+                ephemeral=True,
+            )
+            return
+
+        # ====================================================
+        # REWARD EMBED
+        # ====================================================
 
         if was_new:
             card_status = "✦ **New card added to your Bag!**"
@@ -428,7 +502,7 @@ class Daily(commands.Cog):
                 f"-# {booster['description']}\n"
                 "-# ✧ Ticket received. It is not active yet.\n"
                 "-# ✦ Use `/activate boost` whenever you wish.\n\n"
-                "╰─ ⋆⋅☆⋅⋆ ─╯\n\n"
+                "╰─ ⋆⋅☆⋅☆⋅⋆ ─╯\n\n"
                 f"{GLIMMER_EMOTE} **Glimmers**\n"
                 f"✦ +**{DAILY_GLIMMERS:,}** {GLIMMER_EMOTE}\n\n"
                 "✦ ────── ⋆⋅☆⋅⋆ ────── ✦\n"
@@ -445,7 +519,7 @@ class Daily(commands.Cog):
         divider_embed = discord.Embed(color=EMBED_COLOR)
         divider_embed.set_image(url=DIVIDER_URL)
 
-        await interaction.response.send_message(
+        await interaction.edit_original_response(
             embeds=[
                 header_embed,
                 reward_embed,
@@ -454,5 +528,10 @@ class Daily(commands.Cog):
         )
 
 
+# ============================================================
+# SETUP
+# ============================================================
+
 async def setup(bot: commands.Bot):
+    await asyncio.to_thread(initialize_daily_database)
     await bot.add_cog(Daily(bot))
