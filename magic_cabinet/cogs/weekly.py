@@ -1,4 +1,5 @@
 
+import asyncio
 import json
 import random
 from datetime import datetime, timezone, timedelta
@@ -117,6 +118,34 @@ def get_or_create_weekly_challenge(user_id):
         }
 
 
+def get_weekly_display_data(user_id):
+    challenge = get_or_create_weekly_challenge(user_id)
+    task_data = challenge["task_data"]
+
+    if isinstance(task_data, str):
+        task_data = json.loads(task_data)
+
+    with get_connection() as conn:
+        progress_rows = conn.execute(
+            """
+            SELECT task_id, progress, completed
+            FROM weekly_progress
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchall()
+
+    progress = {
+        row["task_id"]: {
+            "progress": row["progress"],
+            "completed": row["completed"],
+        }
+        for row in progress_rows
+    }
+
+    return task_data, progress
+
+
 class Weekly(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -128,87 +157,80 @@ class Weekly(commands.Cog):
     async def weekly(self, interaction: discord.Interaction):
         user_id = interaction.user.id
 
-        challenge = get_or_create_weekly_challenge(user_id)
-        task_data = challenge["task_data"]
+        await interaction.response.defer(ephemeral=True, thinking=True)
 
-        if isinstance(task_data, str):
-            task_data = json.loads(task_data)
+        try:
+            task_data, progress = await asyncio.to_thread(
+                get_weekly_display_data,
+                user_id,
+            )
 
-        with get_connection() as conn:
-            progress_rows = conn.execute(
-                """
-                SELECT task_id, progress, completed
-                FROM weekly_progress
-                WHERE user_id = ?
-                """,
-                (user_id,),
-            ).fetchall()
+            embed = discord.Embed(
+                title="✦ Weekly Challenges ✦",
+                description=(
+                    "Complete your challenges to earn Glimmers "
+                    "and unlock the grand reward."
+                ),
+                color=discord.Color.from_str("#4E0017"),
+            )
 
-        progress = {
-            row["task_id"]: row
-            for row in progress_rows
-        }
+            for task_id, task in task_data.items():
+                row = progress.get(task_id)
+                current = row["progress"] if row else 0
+                completed = bool(row["completed"]) if row else False
 
-        embed = discord.Embed(
-            title="✦ Weekly Challenges ✦",
-            description=(
-                "Complete your challenges to earn Glimmers "
-                "and unlock the grand reward."
-            ),
-            color=discord.Color.from_str("#4E0017"),
-        )
+                status = (
+                    "✓ Completed"
+                    if completed
+                    else f"{current}/{task['target']}"
+                )
 
-        for task_id, task in task_data.items():
-            row = progress.get(task_id)
-            current = row["progress"] if row else 0
-            completed = bool(row["completed"]) if row else False
+                embed.add_field(
+                    name=f"{task['name']} — {status}",
+                    value=(
+                        f"{task['description']}\n"
+                        f"Reward: **{task['reward']:,} Glimmers**"
+                    ),
+                    inline=False,
+                )
 
-            status = (
-                "✓ Completed"
-                if completed
-                else f"{current}/{task['target']}"
+            completed_count = sum(
+                1
+                for row in progress.values()
+                if row["completed"]
             )
 
             embed.add_field(
-                name=f"{task['name']} — {status}",
+                name="Grand Reward",
                 value=(
-                    f"{task['description']}\n"
-                    f"Reward: **{task['reward']:,} Glimmers**"
+                    f"Challenges completed: **{completed_count}/3**\n"
+                    "Complete all three to unlock **25,000 Glimmers, "
+                    "1 Epic card, and 1 Blind Box**."
                 ),
                 inline=False,
             )
 
-        completed_count = sum(
-            1 for row in progress_rows if row["completed"]
-        )
-
-        embed.add_field(
-            name="Grand Reward",
-            value=(
-                f"Challenges completed: **{completed_count}/3**\n"
-                "Complete all three to unlock **25,000 Glimmers, "
-                "1 Epic card, and 1 Blind Box**."
-            ),
-            inline=False,
-        )
-
-        embed.set_footer(
-            text="A new weekly set begins on Monday (UTC)."
-        )
-
-        await interaction.response.send_message(
-            embed=embed,
-            ephemeral=True,
-        )
-
-        try:
-            save_weekly_channel(
-                user_id,
-                interaction.guild_id,
-                interaction.channel_id,
+            embed.set_footer(
+                text="A new weekly set begins on Monday (UTC)."
             )
+
+            await interaction.edit_original_response(embed=embed)
+
+            try:
+                await asyncio.to_thread(
+                    save_weekly_channel,
+                    user_id,
+                    interaction.guild_id,
+                    interaction.channel_id,
+                )
+            except Exception:
+                pass
+
         except Exception:
-            pass
+            await interaction.edit_original_response(
+                content="Something went wrong while loading your weekly challenges. Please try again.",
+                embed=None,
+            )
 
 
 async def setup(bot):
