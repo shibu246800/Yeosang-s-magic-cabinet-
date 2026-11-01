@@ -4,7 +4,6 @@ import asyncio
 import threading
 
 import discord
-import psycopg
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
@@ -13,10 +12,6 @@ from flask import Flask
 from magic_cabinet.database import (
     get_connection,
     initialize_database,
-)
-from magic_cabinet.postgres_database import (
-    initialize_postgres_database,
-    check_postgres_tables,
 )
 
 load_dotenv()
@@ -53,43 +48,22 @@ EMBED_COLOR = discord.Color.from_str("#4E0017")
 
 
 # ---------------------------------------------------------
-# POSTGRESQL CONNECTION TEST
+# TURSO CONNECTION TEST
 # ---------------------------------------------------------
 
-async def test_prisma_connection():
-    database_url = os.getenv("DATABASE_URL")
+def test_turso_connection():
+    """Verify that Magic Cabinet can access Turso Cloud."""
 
-    if not database_url:
-        print("[POSTGRES TEST] DATABASE_URL is missing.")
-        return False
+    with get_connection() as connection:
+        result = connection.execute(
+            "SELECT 1"
+        ).fetchone()
 
-    def check_connection():
-        with psycopg.connect(
-            database_url,
-            connect_timeout=5,
-        ) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT 1")
-                return cursor.fetchone()[0]
-
-    try:
-        result = await asyncio.to_thread(check_connection)
-
-        if result == 1:
-            print("[POSTGRES TEST] CONNECTION SUCCESSFUL!")
-            return True
-
-    except Exception as error:
-        print(
-            f"[POSTGRES TEST] FAILED: "
-            f"{type(error).__name__}: {error}"
-        )
-
-    return False
+        return result[0] == 1
 
 
 # ---------------------------------------------------------
-# COMMAND ACCESS CONTROL — EXISTING SQLITE
+# COMMAND ACCESS CONTROL
 # ---------------------------------------------------------
 
 class CabinetCommandTree(app_commands.CommandTree):
@@ -166,7 +140,7 @@ class CabinetCommandTree(app_commands.CommandTree):
         except Exception as error:
             print(
                 "ERROR: The Cabinet command lock could not "
-                f"check the database: {type(error).__name__}"
+                f"check the database: {type(error).__name__}: {error}"
             )
 
             await interaction.response.send_message(
@@ -189,33 +163,30 @@ class MagicCabinetBot(commands.Bot):
     async def setup_hook(self):
         print("=== SETUP HOOK STARTED ===")
 
-        # Keep the existing SQLite database active.
-        initialize_database()
-        print("[SQLITE] Database initialized.")
+        # Initialize Turso database.
+        try:
+            await asyncio.to_thread(initialize_database)
+            print("[TURSO] Database initialized.")
 
-        # Check PostgreSQL without migrating player records.
-        connected = await test_prisma_connection()
-
-        if connected:
-            try:
-                await asyncio.to_thread(
-                    initialize_postgres_database
-                )
-                print("[POSTGRES] Known tables initialized.")
-
-                await asyncio.to_thread(check_postgres_tables)
-                print("[POSTGRES] Table check completed.")
-
-            except Exception as error:
-                print(
-                    "[POSTGRES] Check failed: "
-                    f"{type(error).__name__}: {error}"
-                )
-        else:
-            print(
-                "[POSTGRES] Skipped. SQLite remains active."
+            connected = await asyncio.to_thread(
+                test_turso_connection
             )
 
+            if not connected:
+                raise RuntimeError(
+                    "Turso connection test returned an unexpected result."
+                )
+
+            print("[TURSO] CONNECTION SUCCESSFUL!")
+
+        except Exception as error:
+            print(
+                "[TURSO] DATABASE INITIALIZATION FAILED: "
+                f"{type(error).__name__}: {error}"
+            )
+            raise
+
+        # Load bot extensions.
         extensions = [
             "magic_cabinet.cogs.cabinet",
             "magic_cabinet.cogs.drop",
@@ -242,6 +213,7 @@ class MagicCabinetBot(commands.Bot):
         print("=== ALL EXTENSIONS LOADED ===")
 
         synced = await self.tree.sync()
+
         print(
             f"=== SYNCED {len(synced)} APPLICATION COMMANDS ==="
         )
