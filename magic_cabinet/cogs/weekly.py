@@ -1,3 +1,4 @@
+
 import json
 import random
 from datetime import datetime, timezone, timedelta
@@ -6,14 +7,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from magic_cabinet.postgres_database import (
-    get_postgres_connection,
-    initialize_postgres_database,
-)
-from magic_cabinet.weekly_tracker import (
-    initialize_tracker_database,
-    save_weekly_channel,
-)
+from magic_cabinet.database import get_connection
+from magic_cabinet.weekly_tracker import save_weekly_channel
 
 
 WEEKLY_TASKS = {
@@ -38,100 +33,85 @@ WEEKLY_TASKS = {
 }
 
 
-def initialize_weekly_database():
-    initialize_postgres_database()
-    initialize_tracker_database()
-
-    with get_postgres_connection() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS weekly_challenges (
-                user_id BIGINT PRIMARY KEY,
-                week_started TEXT NOT NULL,
-                task_data TEXT NOT NULL,
-                guaranteed_claimed INTEGER NOT NULL DEFAULT 0,
-                reward_claimed INTEGER NOT NULL DEFAULT 0
-            )
-        """)
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS weekly_progress (
-                user_id BIGINT NOT NULL,
-                task_id TEXT NOT NULL,
-                progress INTEGER NOT NULL DEFAULT 0,
-                completed INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (user_id, task_id)
-            )
-        """)
-
-
 def get_week_start():
     now = datetime.now(timezone.utc)
     monday = (now - timedelta(days=now.weekday())).replace(
-        hour=0, minute=0, second=0, microsecond=0
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
     )
     return monday.isoformat()
 
 
-def add_glimmers(user_id, amount):
-    with get_postgres_connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO balances (user_id, glimmers)
-            VALUES (%s, %s)
-            ON CONFLICT (user_id)
-            DO UPDATE SET glimmers = balances.glimmers + EXCLUDED.glimmers
-            """,
-            (user_id, amount),
-        )
-
-
 def get_or_create_weekly_challenge(user_id):
-    initialize_weekly_database()
     week_start = get_week_start()
 
-    with get_postgres_connection() as conn:
+    with get_connection() as conn:
         row = conn.execute(
             """
             SELECT week_started, task_data, guaranteed_claimed,
                    reward_claimed
             FROM weekly_challenges
-            WHERE user_id = %s
+            WHERE user_id = ?
             """,
             (user_id,),
         ).fetchone()
 
         if row and row["week_started"] == week_start:
-            return row
+            return {
+                "week_started": row["week_started"],
+                "task_data": row["task_data"],
+                "guaranteed_claimed": row["guaranteed_claimed"],
+                "reward_claimed": row["reward_claimed"],
+            }
 
         chosen = random.sample(list(WEEKLY_TASKS.keys()), 3)
-        tasks = {task_id: WEEKLY_TASKS[task_id].copy() for task_id in chosen}
+        tasks = {
+            task_id: WEEKLY_TASKS[task_id].copy()
+            for task_id in chosen
+        }
+
+        task_json = json.dumps(tasks)
 
         conn.execute(
             """
             INSERT INTO weekly_challenges
                 (user_id, week_started, task_data,
                  guaranteed_claimed, reward_claimed)
-            VALUES (%s, %s, %s, 0, 0)
+            VALUES (?, ?, ?, 0, 0)
             ON CONFLICT (user_id)
             DO UPDATE SET
-                week_started = EXCLUDED.week_started,
-                task_data = EXCLUDED.task_data,
+                week_started = excluded.week_started,
+                task_data = excluded.task_data,
                 guaranteed_claimed = 0,
                 reward_claimed = 0
             """,
-            (user_id, week_start, json.dumps(tasks)),
+            (user_id, week_start, task_json),
         )
 
         conn.execute(
-            "DELETE FROM weekly_progress WHERE user_id = %s",
+            """
+            DELETE FROM weekly_progress
+            WHERE user_id = ?
+            """,
             (user_id,),
         )
 
-        add_glimmers(user_id, 10000)
+        conn.execute(
+            """
+            INSERT INTO balances (user_id, glimmers)
+            VALUES (?, 10000)
+            ON CONFLICT (user_id)
+            DO UPDATE SET
+                glimmers = balances.glimmers + 10000
+            """,
+            (user_id,),
+        )
 
         return {
             "week_started": week_start,
-            "task_data": json.dumps(tasks),
+            "task_data": task_json,
             "guaranteed_claimed": 0,
             "reward_claimed": 0,
         }
@@ -140,7 +120,6 @@ def get_or_create_weekly_challenge(user_id):
 class Weekly(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        initialize_weekly_database()
 
     @app_commands.command(
         name="weekly",
@@ -155,12 +134,12 @@ class Weekly(commands.Cog):
         if isinstance(task_data, str):
             task_data = json.loads(task_data)
 
-        with get_postgres_connection() as conn:
+        with get_connection() as conn:
             progress_rows = conn.execute(
                 """
                 SELECT task_id, progress, completed
                 FROM weekly_progress
-                WHERE user_id = %s
+                WHERE user_id = ?
                 """,
                 (user_id,),
             ).fetchall()
@@ -184,7 +163,11 @@ class Weekly(commands.Cog):
             current = row["progress"] if row else 0
             completed = bool(row["completed"]) if row else False
 
-            status = "✓ Completed" if completed else f"{current}/{task['target']}"
+            status = (
+                "✓ Completed"
+                if completed
+                else f"{current}/{task['target']}"
+            )
 
             embed.add_field(
                 name=f"{task['name']} — {status}",
@@ -209,7 +192,9 @@ class Weekly(commands.Cog):
             inline=False,
         )
 
-        embed.set_footer(text="A new weekly set begins on Monday (UTC).")
+        embed.set_footer(
+            text="A new weekly set begins on Monday (UTC)."
+        )
 
         await interaction.response.send_message(
             embed=embed,
@@ -227,5 +212,4 @@ class Weekly(commands.Cog):
 
 
 async def setup(bot):
-    initialize_weekly_database()
     await bot.add_cog(Weekly(bot))
