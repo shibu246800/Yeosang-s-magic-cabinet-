@@ -188,12 +188,12 @@ def status_emoji(status):
     return "⚪"
 
 
-def filtered_collections(vault=None, status=None, user_id=None):
+def filtered_collections(
+    vault=None,
+    status=None,
+    owned_ids=None,
+):
     result = list(COLLECTIONS)
-    owned_ids = set()
-
-    if user_id is not None and status:
-        owned_ids = get_owned_card_ids(user_id)
 
     if vault:
         result = [
@@ -203,6 +203,8 @@ def filtered_collections(vault=None, status=None, user_id=None):
         ]
 
     if status:
+        owned_ids = owned_ids or set()
+
         result = [
             collection
             for collection in result
@@ -524,6 +526,7 @@ class CollectionView(discord.ui.View):
         self.vault = vault
         self.status = status
         self.current_collections = []
+        self.owned_ids = set()
 
         self.refresh_components()
 
@@ -541,7 +544,7 @@ class CollectionView(discord.ui.View):
         return filtered_collections(
             vault=self.vault,
             status=self.status,
-            user_id=self.user_id,
+            owned_ids=self.owned_ids,
         )
 
     def page_count(self):
@@ -550,7 +553,7 @@ class CollectionView(discord.ui.View):
 
     def get_page_collections(self):
         collections = self.get_filtered()
-        total_pages = self.page_count()
+        total_pages = max(1, math.ceil(len(collections) / PAGE_SIZE))
 
         self.page = max(0, min(self.page, total_pages - 1))
 
@@ -608,6 +611,12 @@ class CollectionView(discord.ui.View):
         self.add_item(SearchButton(self))
 
     async def refresh_message(self, interaction):
+        if self.status:
+            self.owned_ids = await asyncio.to_thread(
+                get_owned_card_ids,
+                self.user_id,
+            )
+
         self.refresh_components()
         page_collections = self.current_collections
 
@@ -688,8 +697,7 @@ class CollectionSelect(discord.ui.Select):
             filename="collection.png",
         )
 
-        status, count = await asyncio.to_thread(
-            get_collection_status,
+        status, count = get_collection_status(
             collection_id,
             owned_ids,
         )
@@ -882,8 +890,7 @@ class CollectionSearchModal(discord.ui.Modal, title="Search Collection"):
             filename="collection.png",
         )
 
-        status, count = await asyncio.to_thread(
-            get_collection_status,
+        status, count = get_collection_status(
             collection_id,
             owned_ids,
         )
