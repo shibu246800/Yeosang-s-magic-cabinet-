@@ -1,8 +1,6 @@
 
 """Magic Cabinet profile command."""
 
-import sqlite3
-
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -41,7 +39,7 @@ VAULT_ORDER = ["BB", "GG", "BG"]
 
 
 def initialize_profile_database():
-    """Create profile tables in the shared SQLite database."""
+    """Create profile tables in the shared database."""
 
     with get_connection() as connection:
         connection.execute("""
@@ -271,17 +269,8 @@ class Profile(commands.Cog):
                 embeds=[header, profile_embed, divider]
             )
 
-        except sqlite3.Error as error:
-            print(f"[PROFILE DATABASE ERROR] {error!r}")
-
-            await interaction.followup.send(
-                "The profile database could not be read. "
-                "Please check the bot logs.",
-                ephemeral=True,
-            )
-
         except Exception as error:
-            print(f"[PROFILE ERROR] {error!r}")
+            print(f"[PROFILE DATABASE/COMMAND ERROR] {error!r}")
 
             await interaction.followup.send(
                 "The profile could not be displayed. "
