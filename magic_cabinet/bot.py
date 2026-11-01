@@ -66,6 +66,41 @@ def test_turso_connection():
 # COMMAND ACCESS CONTROL
 # ---------------------------------------------------------
 
+def check_command_access(guild_id: int, user_id: int, command_name: str):
+    """Run all synchronous access-control database queries."""
+
+    with get_connection() as connection:
+        setup_result = connection.execute(
+            """
+            SELECT 1
+            FROM drop_channels
+            WHERE guild_id = ?
+            """,
+            (guild_id,),
+        ).fetchone()
+
+        if setup_result is None:
+            return "not_setup"
+
+        if command_name == "magic awaken":
+            return "allowed"
+
+        vault_result = connection.execute(
+            """
+            SELECT 1
+            FROM player_vaults
+            WHERE user_id = ?
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+
+    if vault_result is None:
+        return "vault_missing"
+
+    return "allowed"
+
+
 class CabinetCommandTree(app_commands.CommandTree):
 
     async def interaction_check(
@@ -94,39 +129,23 @@ class CabinetCommandTree(app_commands.CommandTree):
             return False
 
         try:
-            with get_connection() as connection:
-                setup_result = connection.execute(
-                    """
-                    SELECT 1
-                    FROM drop_channels
-                    WHERE guild_id = ?
-                    """,
-                    (interaction.guild_id,),
-                ).fetchone()
+            access_status = await asyncio.to_thread(
+                check_command_access,
+                interaction.guild_id,
+                interaction.user.id,
+                command_name,
+            )
 
-                if setup_result is None:
-                    await interaction.response.send_message(
-                        "🔒 **The Cabinet is not set up yet.**\n\n"
-                        "An administrator must run `/cabinet setup` "
-                        "before players can begin.",
-                        ephemeral=True,
-                    )
-                    return False
+            if access_status == "not_setup":
+                await interaction.response.send_message(
+                    "🔒 **The Cabinet is not set up yet.**\n\n"
+                    "An administrator must run `/cabinet setup` "
+                    "before players can begin.",
+                    ephemeral=True,
+                )
+                return False
 
-                if command_name == "magic awaken":
-                    return True
-
-                vault_result = connection.execute(
-                    """
-                    SELECT 1
-                    FROM player_vaults
-                    WHERE user_id = ?
-                    LIMIT 1
-                    """,
-                    (interaction.user.id,),
-                ).fetchone()
-
-            if vault_result is None:
+            if access_status == "vault_missing":
                 await interaction.response.send_message(
                     "🔒 **Your Magic Cabinet is still sealed.**\n\n"
                     "Use `/magic awaken` and select your vault "
