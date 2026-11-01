@@ -1,6 +1,7 @@
 
 """Magic Cabinet booster system."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 import discord
@@ -265,25 +266,82 @@ def get_active_boosters(user_id: int):
     ]
 
 
-def get_daily_source_activation_count(
-    user_id: int,
-    source: str,
-) -> int:
+def get_daily_source_activation_counts(user_id: int) -> dict:
+    """Get daily and shop activation counts in one query."""
+
     today = datetime.now(timezone.utc).date().isoformat()
 
     with get_connection() as connection:
-        row = connection.execute(
+        rows = connection.execute(
             """
-            SELECT COUNT(*) AS activation_count
+            SELECT source, COUNT(*) AS activation_count
             FROM booster_activation_log
             WHERE user_id = ?
-              AND source = ?
               AND substr(activated_at, 1, 10) = ?
+            GROUP BY source
             """,
-            (user_id, source, today),
-        ).fetchone()
+            (user_id, today),
+        ).fetchall()
 
-    return 0 if row is None else row["activation_count"]
+    counts = {
+        "daily": 0,
+        "shop": 0,
+    }
+
+    for row in rows:
+        if row["source"] in counts:
+            counts[row["source"]] = row["activation_count"]
+
+    return counts
+
+
+def get_activation_data(user_id: int):
+    """Retrieve available tickets and activation counts together."""
+
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    with get_connection() as connection:
+        count_rows = connection.execute(
+            """
+            SELECT source, COUNT(*) AS activation_count
+            FROM booster_activation_log
+            WHERE user_id = ?
+              AND substr(activated_at, 1, 10) = ?
+            GROUP BY source
+            """,
+            (user_id, today),
+        ).fetchall()
+
+        ticket_rows = connection.execute(
+            """
+            SELECT ticket_id, booster_id, source
+            FROM booster_tickets
+            WHERE user_id = ?
+              AND activated_at IS NULL
+            ORDER BY ticket_id ASC
+            """,
+            (user_id,),
+        ).fetchall()
+
+    counts = {
+        "daily": 0,
+        "shop": 0,
+    }
+
+    for row in count_rows:
+        if row["source"] in counts:
+            counts[row["source"]] = row["activation_count"]
+
+    tickets = [
+        (
+            row["ticket_id"],
+            row["booster_id"],
+            row["source"],
+        )
+        for row in ticket_rows
+    ]
+
+    return counts, tickets
 
 
 def activate_ticket(
@@ -347,6 +405,7 @@ def activate_ticket(
 
 
 class ConfirmPurchaseView(discord.ui.View):
+
     def __init__(self, user_id: int, booster_id: str):
         super().__init__(timeout=60)
         self.user_id = user_id
@@ -368,9 +427,37 @@ class ConfirmPurchaseView(discord.ui.View):
             )
             return
 
+        await interaction.response.defer(
+            thinking=True,
+            ephemeral=True,
+        )
+
         booster = BOOSTERS[self.booster_id]
 
-        if get_glimmers(self.user_id) < booster["price"]:
+        try:
+            success = await asyncio.to_thread(
+                purchase_booster,
+                self.user_id,
+                self.booster_id,
+                booster["price"],
+            )
+
+        except Exception as error:
+            print(f"[BOOSTER PURCHASE] Turso error: {error}")
+
+            await interaction.edit_original_response(
+                embed=discord.Embed(
+                    description=(
+                        "✦ Your purchase could not be completed. "
+                        "Please try again."
+                    ),
+                    color=EMBED_COLOR,
+                ),
+                view=None,
+            )
+            return
+
+        if not success:
             embed = discord.Embed(
                 description=(
                     f"{booster['emote']} **Not enough Glimmers**\n\n"
@@ -379,27 +466,8 @@ class ConfirmPurchaseView(discord.ui.View):
                 ),
                 color=EMBED_COLOR,
             )
-            await interaction.response.edit_message(
-                embed=embed,
-                view=None,
-            )
-            return
 
-        success = purchase_booster(
-            self.user_id,
-            self.booster_id,
-            booster["price"],
-        )
-
-        if not success:
-            embed = discord.Embed(
-                description=(
-                    "✦ Your purchase could not be completed. "
-                    "Please try again."
-                ),
-                color=EMBED_COLOR,
-            )
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 embed=embed,
                 view=None,
             )
@@ -417,13 +485,15 @@ class ConfirmPurchaseView(discord.ui.View):
             ),
             color=EMBED_COLOR,
         )
-        await interaction.response.edit_message(
+
+        await interaction.edit_original_response(
             embed=embed,
             view=None,
         )
 
 
 class ShopButton(discord.ui.Button):
+
     def __init__(self, user_id: int, booster_id: str):
         booster = BOOSTERS[booster_id]
 
@@ -470,6 +540,7 @@ class ShopButton(discord.ui.Button):
 
 
 class ShopView(discord.ui.View):
+
     def __init__(self, user_id: int):
         super().__init__(timeout=300)
 
@@ -478,6 +549,7 @@ class ShopView(discord.ui.View):
 
 
 class ActivateView(discord.ui.View):
+
     def __init__(self, user_id: int, tickets: list):
         super().__init__(timeout=60)
 
@@ -506,99 +578,121 @@ class ActivateView(discord.ui.View):
                     )
                     return
 
-                source_count = get_daily_source_activation_count(
-                    user_id,
-                    source,
+                await interaction.response.defer(
+                    thinking=True,
+                    ephemeral=True,
                 )
 
-                if source_count >= 1:
-                    if source == "daily":
-                        message = (
-                            "✦ You have already activated "
-                            "your daily Booster today."
-                        )
-                    else:
-                        message = (
-                            "✦ You have already activated "
-                            "a bought Booster today."
-                        )
-
-                    await interaction.response.edit_message(
-                        embed=discord.Embed(
-                            description=message,
-                            color=EMBED_COLOR,
-                        ),
-                        view=None,
+                try:
+                    counts = await asyncio.to_thread(
+                        get_daily_source_activation_counts,
+                        user_id,
                     )
-                    return
 
-                total_count = (
-                    get_daily_source_activation_count(user_id, "daily")
-                    + get_daily_source_activation_count(user_id, "shop")
-                )
+                    source_count = counts.get(source, 0)
 
-                if total_count >= MAX_DAILY_ACTIVATIONS:
-                    await interaction.response.edit_message(
+                    if source_count >= 1:
+                        if source == "daily":
+                            message = (
+                                "✦ You have already activated "
+                                "your daily Booster today."
+                            )
+                        else:
+                            message = (
+                                "✦ You have already activated "
+                                "a bought Booster today."
+                            )
+
+                        await interaction.edit_original_response(
+                            embed=discord.Embed(
+                                description=message,
+                                color=EMBED_COLOR,
+                            ),
+                            view=None,
+                        )
+                        return
+
+                    total_count = (
+                        counts["daily"] + counts["shop"]
+                    )
+
+                    if total_count >= MAX_DAILY_ACTIVATIONS:
+                        await interaction.edit_original_response(
+                            embed=discord.Embed(
+                                description=(
+                                    "✦ **Daily Booster Limit Reached**\n\n"
+                                    "You can activate a maximum of "
+                                    "**2 boosters per day**.\n\n"
+                                    "✦ One daily Booster\n"
+                                    "✦ One bought Booster"
+                                ),
+                                color=EMBED_COLOR,
+                            ),
+                            view=None,
+                        )
+                        return
+
+                    expires_at = await asyncio.to_thread(
+                        activate_ticket,
+                        ticket_id,
+                        user_id,
+                        booster_id,
+                        source,
+                    )
+
+                    if expires_at is None:
+                        await interaction.edit_original_response(
+                            embed=discord.Embed(
+                                description=(
+                                    "✦ This Booster Ticket is no longer "
+                                    "available for activation."
+                                ),
+                                color=EMBED_COLOR,
+                            ),
+                            view=None,
+                        )
+                        return
+
+                    booster = BOOSTERS[booster_id]
+
+                    await interaction.edit_original_response(
                         embed=discord.Embed(
                             description=(
-                                "✦ **Daily Booster Limit Reached**\n\n"
-                                "You can activate a maximum of "
-                                "**2 boosters per day**.\n\n"
-                                "✦ One daily Booster\n"
-                                "✦ One bought Booster"
+                                f"{booster['emote']} "
+                                f"**{booster['name']} ACTIVATED**\n\n"
+                                f"{booster['description']}\n\n"
+                                "✦ Active for **24 hours**.\n"
+                                "✦ Bought boosters can stack.\n\n"
+                                f"✦ Activations today: "
+                                f"**{total_count + 1}/2**"
                             ),
                             color=EMBED_COLOR,
                         ),
                         view=None,
                     )
-                    return
 
-                expires_at = activate_ticket(
-                    ticket_id,
-                    user_id,
-                    booster_id,
-                    source,
-                )
+                except Exception as error:
+                    print(f"[BOOSTER ACTIVATION] Turso error: {error}")
 
-                if expires_at is None:
-                    await interaction.response.edit_message(
+                    await interaction.edit_original_response(
                         embed=discord.Embed(
                             description=(
-                                "✦ This Booster Ticket is no longer "
-                                "available for activation."
+                                "✦ The Cabinet couldn't activate "
+                                "this Booster. Please try again."
                             ),
                             color=EMBED_COLOR,
                         ),
                         view=None,
                     )
-                    return
-
-                booster = BOOSTERS[booster_id]
-
-                await interaction.response.edit_message(
-                    embed=discord.Embed(
-                        description=(
-                            f"{booster['emote']} "
-                            f"**{booster['name']} ACTIVATED**\n\n"
-                            f"{booster['description']}\n\n"
-                            "✦ Active for **24 hours**.\n"
-                            "✦ Bought boosters can stack.\n\n"
-                            f"✦ Activations today: "
-                            f"**{total_count + 1}/2**"
-                        ),
-                        color=EMBED_COLOR,
-                    ),
-                    view=None,
-                )
 
             button.callback = callback
             self.add_item(button)
 
 
 class Booster(commands.GroupCog, name="booster"):
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        initialize_booster_database()
 
     @app_commands.command(
         name="shop",
@@ -639,9 +733,9 @@ class Booster(commands.GroupCog, name="booster"):
 
 
 class Activate(commands.GroupCog, name="activate"):
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        initialize_booster_database()
 
     @app_commands.command(
         name="boost",
@@ -650,18 +744,32 @@ class Activate(commands.GroupCog, name="activate"):
     async def boost(self, interaction: discord.Interaction):
         user_id = interaction.user.id
 
-        daily_count = get_daily_source_activation_count(
-            user_id,
-            "daily",
+        await interaction.response.defer(
+            thinking=True,
+            ephemeral=True,
         )
-        shop_count = get_daily_source_activation_count(
-            user_id,
-            "shop",
-        )
+
+        try:
+            counts, tickets = await asyncio.to_thread(
+                get_activation_data,
+                user_id,
+            )
+
+        except Exception as error:
+            print(f"[ACTIVATE BOOST] Turso error: {error}")
+
+            await interaction.followup.send(
+                "The Cabinet is temporarily unable to access your Booster records. Please try again.",
+                ephemeral=True,
+            )
+            return
+
+        daily_count = counts["daily"]
+        shop_count = counts["shop"]
         total_count = daily_count + shop_count
 
         if total_count >= MAX_DAILY_ACTIVATIONS:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=discord.Embed(
                     description=(
                         "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
@@ -678,10 +786,8 @@ class Activate(commands.GroupCog, name="activate"):
             )
             return
 
-        tickets = get_available_tickets(user_id)
-
         if not tickets:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=discord.Embed(
                     description=(
                         "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
@@ -700,10 +806,7 @@ class Activate(commands.GroupCog, name="activate"):
         available_buttons = []
 
         for ticket_id, booster_id, source in tickets:
-            source_count = get_daily_source_activation_count(
-                user_id,
-                source,
-            )
+            source_count = counts.get(source, 0)
 
             if source_count >= 1:
                 continue
@@ -716,7 +819,7 @@ class Activate(commands.GroupCog, name="activate"):
             )
 
         if not available_buttons:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=discord.Embed(
                     description=(
                         "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
@@ -731,7 +834,7 @@ class Activate(commands.GroupCog, name="activate"):
             )
             return
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=discord.Embed(
                 description=(
                     "✦ ───── ⋆⋅☆⋅⋆ ───── ✦\n\n"
@@ -750,5 +853,7 @@ class Activate(commands.GroupCog, name="activate"):
 
 
 async def setup(bot: commands.Bot):
+    await asyncio.to_thread(initialize_booster_database)
+
     await bot.add_cog(Booster(bot))
     await bot.add_cog(Activate(bot))
