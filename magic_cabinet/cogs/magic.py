@@ -1,13 +1,14 @@
 
 """Magic Cabinet player registration and vault settings."""
 
+import asyncio
 from datetime import datetime, timezone
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from magic_cabinet.database import get_connection, initialize_database
+from magic_cabinet.database import get_connection
 
 
 EMBED_COLOR = discord.Color.from_str("#4E0017")
@@ -20,10 +21,6 @@ VAULT_NAMES = {
 
 VAULT_ORDER = ["BB", "GG", "BG"]
 GLIMMER_EMOTE = "<:glimmer:1554842064464773172>"
-
-
-def initialize_magic_database():
-    initialize_database()
 
 
 def ensure_player(user_id: int):
@@ -40,6 +37,31 @@ def ensure_player(user_id: int):
 
 def get_selected_vaults(user_id: int) -> list[str]:
     with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT vault
+            FROM player_vaults
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchall()
+
+    selected = {row["vault"] for row in rows}
+    return [vault for vault in VAULT_ORDER if vault in selected]
+
+
+def get_awaken_data(user_id: int):
+    """Register the player and retrieve their selected vaults."""
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO players (user_id, created_at, vault)
+            VALUES (?, ?, NULL)
+            ON CONFLICT(user_id) DO NOTHING
+            """,
+            (user_id, datetime.now(timezone.utc).isoformat()),
+        )
+
         rows = connection.execute(
             """
             SELECT vault
@@ -102,6 +124,32 @@ def give_starting_glimmers(user_id: int):
             """,
             (user_id,),
         )
+
+
+def get_vault_settings_data(user_id: int):
+    """Check registration and retrieve selected vaults."""
+    with get_connection() as connection:
+        player = connection.execute(
+            "SELECT user_id FROM players WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+
+        if player is None:
+            return None, []
+
+        rows = connection.execute(
+            """
+            SELECT vault
+            FROM player_vaults
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchall()
+
+    selected = {row["vault"] for row in rows}
+    vaults = [vault for vault in VAULT_ORDER if vault in selected]
+
+    return True, vaults
 
 
 def format_selected_vaults(vaults: list[str]) -> str:
@@ -231,23 +279,33 @@ class VaultSelectionView(discord.ui.View):
             if vault in self.selected_vaults
         ]
 
+        await interaction.response.defer(
+            thinking=True,
+            ephemeral=self.is_settings,
+        )
+
         try:
-            save_vaults(self.user_id, selected)
+            await asyncio.to_thread(save_vaults, self.user_id, selected)
 
             if not self.is_settings:
-                give_starting_glimmers(self.user_id)
+                await asyncio.to_thread(
+                    give_starting_glimmers,
+                    self.user_id,
+                )
 
         except Exception as error:
             print(f"[VAULT SAVE] Turso error: {error}")
 
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    description=(
-                        "The Cabinet couldn't save your Vaults. Please try again."
-                    ),
-                    color=EMBED_COLOR,
+            error_embed = discord.Embed(
+                description=(
+                    "The Cabinet couldn't save your Vaults. Please try again."
                 ),
-                ephemeral=True,
+                color=EMBED_COLOR,
+            )
+
+            await interaction.edit_original_response(
+                embed=error_embed,
+                view=self,
             )
             return
 
@@ -285,7 +343,10 @@ class VaultSelectionView(discord.ui.View):
                 color=EMBED_COLOR,
             )
 
-        await interaction.response.edit_message(embed=embed, view=None)
+        await interaction.edit_original_response(
+            embed=embed,
+            view=None,
+        )
 
 
 class Magic(commands.GroupCog, name="magic"):
@@ -300,14 +361,21 @@ class Magic(commands.GroupCog, name="magic"):
     async def awaken(self, interaction: discord.Interaction):
         user_id = interaction.user.id
 
+        await interaction.response.defer(
+            thinking=True,
+            ephemeral=True,
+        )
+
         try:
-            ensure_player(user_id)
-            existing_vaults = get_selected_vaults(user_id)
+            existing_vaults = await asyncio.to_thread(
+                get_awaken_data,
+                user_id,
+            )
 
         except Exception as error:
             print(f"[MAGIC AWAKEN] Turso error: {error}")
 
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "The Cabinet is temporarily unable to access your records. Please try again.",
                 ephemeral=True,
             )
@@ -328,7 +396,7 @@ class Magic(commands.GroupCog, name="magic"):
                 color=EMBED_COLOR,
             )
 
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=embed,
                 ephemeral=True,
             )
@@ -358,9 +426,10 @@ class Magic(commands.GroupCog, name="magic"):
             color=EMBED_COLOR,
         )
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=embed,
             view=VaultSelectionView(user_id=user_id),
+            ephemeral=True,
         )
 
 
@@ -376,32 +445,36 @@ class Vault(commands.GroupCog, name="vault"):
     async def settings(self, interaction: discord.Interaction):
         user_id = interaction.user.id
 
-        try:
-            with get_connection() as connection:
-                player = connection.execute(
-                    "SELECT user_id FROM players WHERE user_id = ?",
-                    (user_id,),
-                ).fetchone()
+        await interaction.response.defer(
+            thinking=True,
+            ephemeral=True,
+        )
 
-            if player is None:
-                await interaction.response.send_message(
-                    embed=discord.Embed(
-                        description=(
-                            "🔒 Your Cabinet is not awake yet.\n\n"
-                            "Use `/magic awaken` first."
-                        ),
-                        color=EMBED_COLOR,
+        try:
+            player_exists, current_vaults = await asyncio.to_thread(
+                get_vault_settings_data,
+                user_id,
+            )
+
+            if player_exists is None:
+                embed = discord.Embed(
+                    description=(
+                        "🔒 Your Cabinet is not awake yet.\n\n"
+                        "Use `/magic awaken` first."
                     ),
+                    color=EMBED_COLOR,
+                )
+
+                await interaction.followup.send(
+                    embed=embed,
                     ephemeral=True,
                 )
                 return
 
-            current_vaults = get_selected_vaults(user_id)
-
         except Exception as error:
             print(f"[VAULT SETTINGS] Turso error: {error}")
 
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "The Cabinet is temporarily unable to access your records. Please try again.",
                 ephemeral=True,
             )
@@ -423,7 +496,7 @@ class Vault(commands.GroupCog, name="vault"):
             color=EMBED_COLOR,
         )
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=embed,
             view=VaultSelectionView(
                 user_id=user_id,
@@ -435,6 +508,5 @@ class Vault(commands.GroupCog, name="vault"):
 
 
 async def setup(bot: commands.Bot):
-    initialize_magic_database()
     await bot.add_cog(Magic(bot))
     await bot.add_cog(Vault(bot))
