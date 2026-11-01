@@ -8,10 +8,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from magic_cabinet.database import (
-    get_connection,
-    initialize_database,
-)
+from magic_cabinet.database import get_connection
+
 from magic_cabinet.data.normal import CARDS as NORMAL_CARDS
 from magic_cabinet.data.rare import CARDS as RARE_CARDS
 from magic_cabinet.data.epic import CARDS as EPIC_CARDS
@@ -52,8 +50,6 @@ CARD_DATA = {
 
 def merge_card(user_id: int, card_id: int):
     """Merge three duplicate copies into a higher-rarity card."""
-
-    initialize_database()
 
     card = CARD_DATA.get(card_id)
 
@@ -148,7 +144,6 @@ class Merge(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        initialize_database()
 
     @app_commands.command(
         name="merge",
@@ -162,44 +157,51 @@ class Merge(commands.Cog):
         interaction: discord.Interaction,
         card_id: int,
     ):
-        success, message, upgraded_card, reward = await asyncio.to_thread(
-            merge_card,
-            interaction.user.id,
-            card_id,
-        )
+        await interaction.response.defer(thinking=True)
 
-        if not success:
+        try:
+            success, message, upgraded_card, reward = await asyncio.to_thread(
+                merge_card,
+                interaction.user.id,
+                card_id,
+            )
+
+            if not success:
+                embed = discord.Embed(
+                    description=f"✦ {message}",
+                    color=EMBED_COLOR,
+                )
+
+                await interaction.edit_original_response(embed=embed)
+                return
+
             embed = discord.Embed(
-                description=f"✦ {message}",
+                title="✧ THE MERGE IS COMPLETE ✧",
+                description=(
+                    f"Three duplicate copies of **Card #{card_id}** "
+                    f"have been merged.\n\n"
+                    f"✦ **New Card:** #{upgraded_card['id']}\n"
+                    f"✦ **Rarity:** {upgraded_card['stars']}\n"
+                    f"✦ **Collection:** {upgraded_card['collection_id']}\n\n"
+                    f"{GLIMMER_EMOTE} **Reward:** {reward} Glimmers"
+                ),
                 color=EMBED_COLOR,
             )
-            await interaction.response.send_message(
-                embed=embed,
-                ephemeral=True,
+
+            if upgraded_card.get("image"):
+                embed.set_thumbnail(url=upgraded_card["image"])
+
+            embed.set_footer(
+                text="Your original card remains safe in your collection."
             )
-            return
 
-        embed = discord.Embed(
-            title="✧ THE MERGE IS COMPLETE ✧",
-            description=(
-                f"Three duplicate copies of **Card #{card_id}** "
-                f"have been merged.\n\n"
-                f"✦ **New Card:** #{upgraded_card['id']}\n"
-                f"✦ **Rarity:** {upgraded_card['stars']}\n"
-                f"✦ **Collection:** {upgraded_card['collection_id']}\n\n"
-                f"{GLIMMER_EMOTE} **Reward:** {reward} Glimmers"
-            ),
-            color=EMBED_COLOR,
-        )
+            await interaction.edit_original_response(embed=embed)
 
-        if upgraded_card.get("image"):
-            embed.set_thumbnail(url=upgraded_card["image"])
-
-        embed.set_footer(
-            text="Your original card remains safe in your collection."
-        )
-
-        await interaction.response.send_message(embed=embed)
+        except Exception:
+            await interaction.edit_original_response(
+                content="Something went wrong while processing your merge. Please try again.",
+                embed=None,
+            )
 
 
 async def setup(bot: commands.Bot):
